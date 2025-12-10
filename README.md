@@ -1,8 +1,8 @@
 
-**
-HawkEars Validator
 
-HawkEars Validator is an R Shiny app for rapid visual and auditory validation of bird detections from HawkEars (or similar CNN/embedding-based recognizers). It takes the model’s output CSV (with filenames, start/end times, species, and scores), cuts 3-second audio snippets from long ARU recordings, and serves them up with synchronized spectrograms so you can efficiently confirm, reject, or flag predictions as unsure.**
+**HawkEars Validator**
+
+**HawkEars Validator is an R Shiny app for rapid visual and auditory validation of bird detections from HawkEars (or similar CNN/embedding-based recognizers). It takes the model’s output CSV (with filenames, start/end times, species, and scores), cuts 3-second audio snippets from long ARU recordings, and serves them up with synchronized spectrograms so you can efficiently confirm, reject, or flag predictions as unsure.**
 <img width="1076" height="869" alt="image" src="https://github.com/user-attachments/assets/abac8c97-5af9-4ffa-aa38-b7bb3e8bc841" />
 
 **What it does**
@@ -45,8 +45,7 @@ label (yes, no, unsure, skip)
 
 validated_at timestamp
 
-Smart behaviour
-
+~~ 
 **On startup or when you click Start / Refresh queue, the app:**
 
 Reads existing HawkEars_validation_results.csv
