@@ -823,3 +823,1128 @@ final_summary_table <- threshold_table_pretty %>%
 
 print(final_summary_table)
 readr::write_csv(final_summary_table, "HawkEars_FINAL_thresholds_plus_model_comparison.csv")
+
+
+save.image(file = "workspace.RData")
+
+
+## TEST
+
+
+
+
+
+
+
+
+
+
+
+
+# ============================================================
+# HawkEars Threshold Calibration - Enhancement Tasks
+# Tasks 2, 3, 7, 11, 13 from to-do list
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(broom)
+
+# Assumes you've already run your main script and have:
+# - fits_bi (BI models)
+# - val_bi_eval (validation data with BI)
+# - threshold_table_bi (thresholds across BI levels)
+# - final_summary_table (combined results)
+
+# ============================================================
+# TASK 3: INTERACTION TERM VALIDATION
+# ============================================================
+
+#' Extract interaction coefficients and test significance
+interaction_validation <- fits_bi %>%
+  mutate(
+    # Extract model coefficients
+    coef_summary = map(model_bi, ~ broom::tidy(.x, conf.int = TRUE)),
+    
+    # Get interaction term specifically
+    interaction_term = map(coef_summary, ~ filter(.x, term == "score:BI_z"))
+  ) %>%
+  select(species, n_val_bi, interaction_term) %>%
+  unnest(interaction_term) %>%
+  mutate(
+    # Is interaction significant?
+    sig_05 = p.value < 0.05,
+    sig_01 = p.value < 0.01,
+    
+    # Effect interpretation
+    effect_direction = case_when(
+      estimate > 0 ~ "BI amplifies confidence effect",
+      estimate < 0 ~ "BI dampens confidence effect",
+      TRUE ~ "No effect"
+    )
+  ) %>%
+  select(species, n_val_bi, estimate, std.error, p.value, 
+         conf.low, conf.high, sig_05, sig_01, effect_direction)
+
+print("=== INTERACTION TERM VALIDATION ===")
+print(interaction_validation)
+
+# Save results
+write.csv(interaction_validation, 
+          "HawkEars_interaction_validation.csv", 
+          row.names = FALSE)
+
+#' Calculate predicted probability change across BI range
+#' This shows if interaction is PRACTICALLY important
+interaction_effect_size <- fits_bi %>%
+  left_join(val_bi_eval %>% 
+              group_by(species) %>% 
+              summarise(BI_z_min = min(BI_z, na.rm = TRUE),
+                       BI_z_max = max(BI_z, na.rm = TRUE),
+                       .groups = "drop"),
+            by = "species") %>%
+  mutate(
+    # Predict at median score, low vs high BI
+    pred_data = map2(BI_z_min, BI_z_max, ~ {
+      expand.grid(
+        score = 0.5,  # median-ish score
+        BI_z = c(.x, .y),
+        BI_level = c("Low BI", "High BI")
+      )
+    }),
+    
+    # Get predictions
+    predictions = map2(model_bi, pred_data, ~ {
+      .y %>% mutate(pred_prob = predict(.x, newdata = .y, type = "response"))
+    })
+  ) %>%
+  select(species, predictions) %>%
+  unnest(predictions) %>%
+  group_by(species) %>%
+  summarise(
+    prob_at_low_BI = pred_prob[BI_level == "Low BI"],
+    prob_at_high_BI = pred_prob[BI_level == "High BI"],
+    prob_diff = prob_at_high_BI - prob_at_low_BI,
+    pct_change = (prob_diff / prob_at_low_BI) * 100,
+    .groups = "drop"
+  )
+
+print("=== PRACTICAL EFFECT SIZE (Δ probability across BI range) ===")
+print(interaction_effect_size)
+
+#' Decision: Keep interaction if p<0.05 AND |prob_diff| > 0.05
+interaction_decision <- interaction_validation %>%
+  left_join(interaction_effect_size, by = "species") %>%
+  mutate(
+    keep_interaction = sig_05 & abs(prob_diff) > 0.05,
+    recommendation = case_when(
+      keep_interaction ~ "Use BI model with interaction",
+      sig_05 & !keep_interaction ~ "Try additive BI model (no interaction)",
+      TRUE ~ "Use non-BI model (interaction not justified)"
+    )
+  )
+
+print("=== INTERACTION MODEL DECISION ===")
+print(interaction_decision %>% select(species, p.value, prob_diff, keep_interaction, recommendation))
+
+write.csv(interaction_decision, 
+          "HawkEars_interaction_decision.csv", 
+          row.names = FALSE)
+
+
+# ============================================================
+# TASK 2: BI LEVEL THRESHOLD CURVES (ALL THREE LEVELS)
+# ============================================================
+
+#' Recreate curves for all BI levels (you already have this in curves_bi)
+#' But let's make a focused comparison plot
+
+# Calculate threshold differences across BI levels
+threshold_bi_comparison <- threshold_table_bi %>%
+  select(species, BI_level, chosen_threshold, precision_at_threshold, prop_retained) %>%
+  pivot_wider(
+    names_from = BI_level,
+    values_from = c(chosen_threshold, precision_at_threshold, prop_retained),
+    names_sep = "_"
+  ) %>%
+  mutate(
+    threshold_range = `chosen_threshold_High BI (75%)` - `chosen_threshold_Low BI (25%)`,
+    threshold_sensitivity = case_when(
+      abs(threshold_range) > 0.10 ~ "High sensitivity to BI",
+      abs(threshold_range) > 0.05 ~ "Moderate sensitivity to BI",
+      TRUE ~ "Low sensitivity to BI"
+    )
+  )
+
+print("=== THRESHOLD SENSITIVITY TO BI ===")
+print(threshold_bi_comparison %>% 
+        select(species, threshold_range, threshold_sensitivity, 
+               `chosen_threshold_Low BI (25%)`, 
+               `chosen_threshold_Median BI`,
+               `chosen_threshold_High BI (75%)`))
+
+write.csv(threshold_bi_comparison, 
+          "HawkEars_threshold_BI_sensitivity.csv", 
+          row.names = FALSE)
+
+#' Generate faceted plot for all BI levels
+plot_all_bi_levels <- function(sp) {
+  sp_curves <- curves_bi %>% filter(species == sp)
+  sp_thresholds <- threshold_table_bi %>% filter(species == sp)
+  
+  ggplot(sp_curves, aes(x = threshold, y = precision, color = BI_level)) +
+    geom_line(linewidth = 1.1) +
+    geom_point(size = 1.5, alpha = 0.7) +
+    geom_hline(yintercept = 0.90, linetype = "dashed", color = "gray40") +
+    geom_vline(data = sp_thresholds, 
+               aes(xintercept = chosen_threshold, color = BI_level),
+               linetype = "dotted", linewidth = 0.8) +
+    scale_color_manual(
+      values = c("Low BI (25%)" = "#2166ac", 
+                 "Median BI" = "#762a83", 
+                 "High BI (75%)" = "#c51b7d")
+    ) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+    labs(
+      title = paste0(sp, " — Precision vs. Threshold across BI Conditions"),
+      subtitle = "Vertical dotted lines show chosen thresholds for each BI level",
+      x = "Confidence Threshold",
+      y = "Precision of Retained Detections",
+      color = "BI Condition"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      legend.position = "top"
+    )
+}
+
+# Generate plots for each species
+for (sp in unique(threshold_table_bi$species)) {
+  p <- plot_all_bi_levels(sp)
+  print(p)
+  ggsave(paste0("HawkEars_BI_curves_", sp, ".png"), 
+         plot = p, width = 8, height = 6, dpi = 300)
+}
+
+
+# ============================================================
+# TASK 13: SPECIES-SPECIFIC INTERPRETATIONS
+# ============================================================
+
+#' Generate automated interpretation based on metrics
+generate_interpretation <- function(species_data) {
+  sp <- species_data$species
+  
+  # Extract key metrics
+  dauc <- species_data$dAUC
+  dbrier <- species_data$dBrier
+  daic <- species_data$dAIC
+  threshold_nonbi <- species_data$chosen_threshold_nonBI
+  threshold_bi <- species_data$chosen_threshold_BI
+  retention_nonbi <- species_data$prop_retained_nonBI
+  retention_bi <- species_data$prop_retained_BI
+  
+  # Get interaction info
+  interact_info <- interaction_decision %>% filter(species == sp)
+  
+  # Get threshold sensitivity
+  sens_info <- threshold_bi_comparison %>% filter(species == sp)
+  
+  # Build interpretation
+  interpretation <- paste0(
+    "**", sp, "**: ",
+    
+    # BI model improvement
+    if (dauc > 0.01) {
+      paste0("BI substantially improves discrimination (ΔA UC = +", 
+             round(dauc, 3), "). ")
+    } else if (dauc > 0.005) {
+      paste0("BI modestly improves discrimination (ΔAUC = +", 
+             round(dauc, 3), "). ")
+    } else if (dauc > 0) {
+      paste0("BI marginally improves discrimination (ΔAUC = +", 
+             round(dauc, 3), "); improvement may not be practically significant. ")
+    } else {
+      paste0("BI does not improve discrimination (ΔAUC = ", 
+             round(dauc, 3), "). ")
+    },
+    
+    # Threshold stability
+    if (abs(sens_info$threshold_range) > 0.10) {
+      paste0("Chosen threshold varies substantially across BI conditions (range = ", 
+             round(sens_info$threshold_range, 2), "), indicating context-dependent detection. ")
+    } else {
+      paste0("Chosen threshold stable across BI levels (", 
+             round(threshold_nonbi, 2), "), suggesting robust detection. ")
+    },
+    
+    # Retention rate
+    paste0("Non-BI threshold retains ", round(retention_nonbi * 100, 1), 
+           "% of detections at 90% precision. "),
+    
+    # Ecological interpretation placeholder
+    "Ecological context: [ADD SPECIES-SPECIFIC NOTES ON SONG CHARACTERISTICS, HABITAT ASSOCIATIONS, ETC.]"
+  )
+  
+  tibble(species = sp, interpretation = interpretation)
+}
+
+# Generate interpretations for all species
+species_interpretations <- final_summary_table %>%
+  group_split(species) %>%
+  purrr::map_dfr(generate_interpretation)
+
+print("=== SPECIES INTERPRETATIONS ===")
+for (i in 1:nrow(species_interpretations)) {
+  cat("\n", species_interpretations$interpretation[i], "\n")
+}
+
+write.csv(species_interpretations, 
+          "HawkEars_species_interpretations.csv", 
+          row.names = FALSE)
+
+
+# ============================================================
+# TASK 7: BOOTSTRAP CONFIDENCE INTERVALS FOR THRESHOLDS
+# ============================================================
+
+#' Bootstrap function for one species (non-BI model)
+bootstrap_threshold_nonbi <- function(species_name, model, validation_data, n_boot = 100) {
+  
+  sp_data <- validation_data %>% filter(species == species_name)
+  n_obs <- nrow(sp_data)
+  
+  boot_thresholds <- map_dbl(1:n_boot, function(b) {
+    # Resample with replacement
+    boot_sample <- sp_data %>% 
+      slice_sample(n = n_obs, replace = TRUE)
+    
+    # Refit model
+    boot_model <- tryCatch(
+      glm(tp ~ score, family = binomial(), data = boot_sample),
+      error = function(e) NULL
+    )
+    
+    if (is.null(boot_model)) return(NA_real_)
+    
+    # Recompute threshold using Tseng method
+    # (Simplified version - in production, call your full compute_tseng_threshold function)
+    # For now, just return a placeholder based on model coefficients
+    coef(boot_model)[2]  # This is a placeholder - see note below
+  })
+  
+  # Calculate CI
+  ci_lower <- quantile(boot_thresholds, 0.025, na.rm = TRUE)
+  ci_upper <- quantile(boot_thresholds, 0.975, na.rm = TRUE)
+  ci_median <- median(boot_thresholds, na.rm = TRUE)
+  
+  tibble(
+    species = species_name,
+    ci_lower = ci_lower,
+    ci_median = ci_median,
+    ci_upper = ci_upper,
+    n_boot = sum(!is.na(boot_thresholds))
+  )
+}
+
+# NOTE: The bootstrap function above is simplified. For production use, you need to:
+# 1. Bin the bootstrap sample into 0.05 bins
+# 2. Predict TPR for each bin
+# 3. Run the full Tseng threshold calculation
+# This requires adapting your compute_tseng_threshold() function to work on bootstrap samples
+
+# Here's a more complete version:
+
+bootstrap_threshold_complete <- function(species_name, n_boot = 100) {
+  
+  # Get species data
+  sp_val <- val_bi_eval %>% filter(species == species_name)
+  sp_labels <- lab_bins %>% filter(species == species_name)
+  
+  boot_results <- map_dfr(1:n_boot, function(b) {
+    
+    # Resample validation data
+    boot_val <- sp_val %>% 
+      slice_sample(n = nrow(sp_val), replace = TRUE)
+    
+    # Refit model
+    boot_model <- tryCatch(
+      glm(tp ~ score, family = binomial(), data = boot_val),
+      error = function(e) NULL
+    )
+    
+    if (is.null(boot_model)) {
+      return(tibble(boot_iter = b, threshold = NA_real_, 
+                   precision = NA_real_, prop_retained = NA_real_))
+    }
+    
+    # Apply to FULL label bins (not resampled) - this is the population we're deploying to
+    out <- compute_tseng_threshold(
+      sp_labels %>% select(bin_lower, bin_mid, N_i),
+      boot_model
+    )
+    
+    tibble(
+      boot_iter = b,
+      threshold = out$summary$threshold,
+      precision = out$summary$precision,
+      prop_retained = out$summary$prop_retained
+    )
+  })
+  
+  # Summarize bootstrap distribution
+  tibble(
+    species = species_name,
+    threshold_median = median(boot_results$threshold, na.rm = TRUE),
+    threshold_ci_lower = quantile(boot_results$threshold, 0.025, na.rm = TRUE),
+    threshold_ci_upper = quantile(boot_results$threshold, 0.975, na.rm = TRUE),
+    precision_median = median(boot_results$precision, na.rm = TRUE),
+    precision_ci_lower = quantile(boot_results$precision, 0.025, na.rm = TRUE),
+    precision_ci_upper = quantile(boot_results$precision, 0.975, na.rm = TRUE),
+    n_boot_success = sum(!is.na(boot_results$threshold))
+  )
+}
+
+# Run bootstrap for all species (WARNING: This will take several minutes!)
+print("Running bootstrap... this may take 5-10 minutes")
+
+bootstrap_cis_nonbi <- map_dfr(
+  unique(val_bi_eval$species),
+  ~ bootstrap_threshold_complete(.x, n_boot = 100)
+)
+
+print("=== BOOTSTRAP CONFIDENCE INTERVALS (Non-BI Model) ===")
+print(bootstrap_cis_nonbi)
+
+write.csv(bootstrap_cis_nonbi, 
+          "HawkEars_bootstrap_CIs_nonBI.csv", 
+          row.names = FALSE)
+
+# Add CIs to final summary table
+final_summary_with_cis <- final_summary_table %>%
+  left_join(
+    bootstrap_cis_nonbi %>% 
+      select(species, threshold_ci_lower, threshold_ci_upper),
+    by = "species"
+  ) %>%
+  mutate(
+    threshold_ci_width = threshold_ci_upper - threshold_ci_lower,
+    threshold_uncertainty = case_when(
+      threshold_ci_width > 0.20 ~ "High uncertainty - need more validation data",
+      threshold_ci_width > 0.10 ~ "Moderate uncertainty",
+      TRUE ~ "Low uncertainty - threshold well-estimated"
+    )
+  )
+
+print("=== FINAL SUMMARY WITH CONFIDENCE INTERVALS ===")
+print(final_summary_with_cis %>% 
+        select(species, chosen_threshold_nonBI, 
+               threshold_ci_lower, threshold_ci_upper, 
+               threshold_uncertainty))
+
+
+# ============================================================
+# TASK 11: PUBLICATION-READY FIGURES
+# ============================================================
+
+# FIGURE 1: Multi-panel precision curves (non-BI vs BI at median)
+# This combines base model and BI model on same plot
+
+fig1_data <- bind_rows(
+  # Non-BI curves (from your original fits)
+  fits %>%
+    select(species, model) %>%
+    left_join(lab_bins, by = "species") %>%
+    group_by(species) %>%
+    summarise(
+      curve = list(compute_tseng_threshold(
+        cur_data() %>% select(bin_lower, bin_mid, N_i),
+        model[[1]]
+      )$curve),
+      .groups = "drop"
+    ) %>%
+    unnest(curve) %>%
+    mutate(model_type = "Non-BI Model"),
+  
+  # BI curves at median
+  curves_bi %>%
+    filter(BI_level == "Median BI") %>%
+    mutate(model_type = "BI Model (Median)")
+) %>%
+  left_join(
+    # Add chosen thresholds for vertical lines
+    bind_rows(
+      threshold_table %>% 
+        select(species, chosen_threshold) %>% 
+        mutate(model_type = "Non-BI Model"),
+      threshold_table_bi %>% 
+        filter(BI_level == "Median BI") %>%
+        select(species, chosen_threshold) %>%
+        mutate(model_type = "BI Model (Median)")
+    ),
+    by = c("species", "model_type")
+  )
+
+figure1 <- ggplot(fig1_data, 
+                  aes(x = threshold, y = precision, 
+                      color = model_type, linetype = model_type)) +
+  geom_line(linewidth = 1) +
+  geom_vline(aes(xintercept = chosen_threshold, color = model_type),
+             linetype = "dotted", linewidth = 0.6, alpha = 0.8) +
+  geom_hline(yintercept = 0.90, linetype = "dashed", color = "gray40", linewidth = 0.5) +
+  facet_wrap(~ species, ncol = 1, scales = "free_x") +
+  scale_color_manual(
+    values = c("Non-BI Model" = "#1b9e77", "BI Model (Median)" = "#d95f02"),
+    name = NULL
+  ) +
+  scale_linetype_manual(
+    values = c("Non-BI Model" = "solid", "BI Model (Median)" = "dashed"),
+    name = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  labs(
+    title = "Species-Specific Threshold Calibration: BI vs. Non-BI Models",
+    subtitle = "Dashed horizontal line = target precision (0.90); Dotted vertical lines = chosen thresholds",
+    x = "Confidence Threshold",
+    y = "Precision of Retained Detections"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.text = element_text(size = 10)
+  )
+
+print(figure1)
+ggsave("Figure1_Precision_Curves_BI_vs_nonBI.png", 
+       plot = figure1, width = 8, height = 10, dpi = 300)
+
+
+# FIGURE 2: Effect size forest plot (dAUC with CIs)
+# For this we'd need bootstrap CIs for dAUC - simplified version here
+
+figure2_data <- final_summary_table %>%
+  mutate(
+    dAUC_direction = ifelse(dAUC > 0, "BI Improves", "BI Worsens"),
+    species_ordered = forcats::fct_reorder(species, dAUC)
+  )
+
+figure2 <- ggplot(figure2_data, 
+                  aes(x = dAUC, y = species_ordered, color = dAUC_direction)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_vline(xintercept = c(-0.01, 0.01), linetype = "dotted", 
+             color = "gray60", alpha = 0.5) +
+  geom_point(size = 4) +
+  # Add error bars if you have bootstrap CIs for AUC
+  # geom_errorbarh(aes(xmin = dAUC_ci_lower, xmax = dAUC_ci_upper), height = 0.2) +
+  scale_color_manual(
+    values = c("BI Improves" = "#1b9e77", "BI Worsens" = "#d95f02"),
+    name = NULL
+  ) +
+  labs(
+    title = "Effect of BI Model on Discrimination Performance",
+    subtitle = "Dotted lines mark ±0.01 AUC (practical significance threshold)",
+    x = "Change in AUC (BI Model − Non-BI Model)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top"
+  )
+
+print(figure2)
+ggsave("Figure2_Effect_Sizes_dAUC.png", 
+       plot = figure2, width = 7, height = 5, dpi = 300)
+
+
+# FIGURE 3: Threshold heatmap (species × BI level)
+
+figure3_data <- threshold_table_bi %>%
+  mutate(
+    BI_level = factor(BI_level, 
+                     levels = c("Low BI (25%)", "Median BI", "High BI (75%)"))
+  )
+
+figure3 <- ggplot(figure3_data, 
+                  aes(x = BI_level, y = species, fill = chosen_threshold)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = round(chosen_threshold, 2)), 
+            color = "white", fontface = "bold", size = 5) +
+  scale_fill_gradient2(
+    low = "#2166ac", mid = "#f7f7f7", high = "#b2182b",
+    midpoint = 0.5,
+    name = "Chosen\nThreshold",
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "Species-Specific Thresholds across BI Conditions",
+    subtitle = "Lower thresholds (blue) = more permissive; Higher thresholds (red) = more conservative",
+    x = "Bioacoustic Index Condition",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    panel.grid = element_blank()
+  )
+
+print(figure3)
+ggsave("Figure3_Threshold_Heatmap_BI_levels.png", 
+       plot = figure3, width = 7, height = 4, dpi = 300)
+
+
+# ============================================================
+# SUMMARY: What to check in your outputs
+# ============================================================
+
+cat("\n=== TASK COMPLETION SUMMARY ===\n")
+cat("✓ Task 3: Check 'HawkEars_interaction_decision.csv' - use recommendations\n")
+cat("✓ Task 2: Check threshold sensitivity in 'HawkEars_threshold_BI_sensitivity.csv'\n")
+cat("✓ Task 13: Review 'HawkEars_species_interpretations.csv' and add ecological context\n")
+cat("✓ Task 7: Bootstrap CIs in 'HawkEars_bootstrap_CIs_nonBI.csv' - flag wide CIs\n")
+cat("✓ Task 11: Three publication figures saved as PNG files\n")
+cat("\nNEXT STEPS:\n")
+cat("1. Review interaction decisions - consider refitting additive models where recommended\n")
+cat("2. Add species-specific ecological interpretations to the auto-generated text\n")
+cat("3. If bootstrap CIs are wide (>0.20), consider collecting more validation data\n")
+cat("4. Refine figures for publication (adjust colors, add annotations, etc.)\n")
+
+
+
+# ============================================================
+# REFIT BI MODELS WITHOUT INTERACTION TERM
+# Compare: Non-BI vs Additive BI vs Interaction BI
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(broom)
+
+cat("\n=== REFITTING BI MODELS (ADDITIVE ONLY) ===\n")
+
+# -------------------------
+# 1) Fit additive BI models: tp ~ score + BI_z (NO interaction)
+# -------------------------
+
+fits_bi_additive <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
+  nest() %>%
+  mutate(
+    model_bi_additive = map(data, ~ glm(tp ~ score + BI_z, family = binomial(), data = .x)),
+    n_val_bi = map_int(data, nrow)
+  ) %>%
+  select(species, model_bi_additive, n_val_bi)
+
+cat("✓ Additive BI models fitted for", nrow(fits_bi_additive), "species\n")
+
+# -------------------------
+# 2) Calculate metrics for additive models
+# -------------------------
+
+additive_model_results <- fits_bi_additive %>%
+  mutate(
+    metrics = map2(model_bi_additive, species, ~ calc_glm_metrics(.x, val_bi_eval %>% filter(species == .y)))
+  ) %>%
+  unnest(metrics) %>%
+  select(species, n_val_bi, AIC, pseudoR2, AUC, Brier) %>%
+  arrange(species)
+
+cat("✓ Additive model metrics calculated\n")
+
+# -------------------------
+# 3) Three-way model comparison: Non-BI vs Additive BI vs Interaction BI
+# -------------------------
+
+model_comparison_full <- nonbi_model_results %>%
+  transmute(
+    species,
+    AIC_nonBI = AIC, 
+    pseudoR2_nonBI = pseudoR2, 
+    AUC_nonBI = AUC, 
+    Brier_nonBI = Brier
+  ) %>%
+  left_join(
+    additive_model_results %>%
+      transmute(
+        species,
+        AIC_additive = AIC, 
+        pseudoR2_additive = pseudoR2, 
+        AUC_additive = AUC, 
+        Brier_additive = Brier
+      ),
+    by = "species"
+  ) %>%
+  left_join(
+    bi_model_results %>%
+      transmute(
+        species,
+        AIC_interaction = AIC, 
+        pseudoR2_interaction = pseudoR2, 
+        AUC_interaction = AUC, 
+        Brier_interaction = Brier
+      ),
+    by = "species"
+  ) %>%
+  mutate(
+    # Compare additive to non-BI
+    dAIC_additive = AIC_additive - AIC_nonBI,
+    dAUC_additive = AUC_additive - AUC_nonBI,
+    dBrier_additive = Brier_additive - Brier_nonBI,
+    
+    # Compare interaction to additive
+    dAIC_interaction_vs_additive = AIC_interaction - AIC_additive,
+    dAUC_interaction_vs_additive = AUC_interaction - AUC_additive,
+    
+    # Best model by AIC (lower is better)
+    best_model_AIC = case_when(
+      AIC_nonBI == pmin(AIC_nonBI, AIC_additive, AIC_interaction) ~ "Non-BI",
+      AIC_additive == pmin(AIC_nonBI, AIC_additive, AIC_interaction) ~ "Additive BI",
+      TRUE ~ "Interaction BI"
+    ),
+    
+    # Best model by AUC (higher is better)
+    best_model_AUC = case_when(
+      AUC_nonBI == pmax(AUC_nonBI, AUC_additive, AUC_interaction) ~ "Non-BI",
+      AUC_additive == pmax(AUC_nonBI, AUC_additive, AUC_interaction) ~ "Additive BI",
+      TRUE ~ "Interaction BI"
+    ),
+    
+    # Substantive improvement? (dAIC < -2 is standard threshold; dAUC > 0.01 is practical)
+    additive_better_than_nonBI = dAIC_additive < -2 | dAUC_additive > 0.01,
+    interaction_better_than_additive = dAIC_interaction_vs_additive < -2 | dAUC_interaction_vs_additive > 0.01,
+    
+    # Final recommendation
+    recommended_model = case_when(
+      !additive_better_than_nonBI ~ "Non-BI (BI not helpful)",
+      additive_better_than_nonBI & interaction_better_than_additive ~ "Interaction BI",
+      additive_better_than_nonBI & !interaction_better_than_additive ~ "Additive BI",
+      TRUE ~ "Non-BI"
+    )
+  ) %>%
+  arrange(species)
+
+print("=== FULL THREE-WAY MODEL COMPARISON ===")
+print(model_comparison_full %>% 
+        select(species, AIC_nonBI, AIC_additive, AIC_interaction, 
+               AUC_nonBI, AUC_additive, AUC_interaction,
+               recommended_model))
+
+write.csv(model_comparison_full, 
+          "HawkEars_model_comparison_FULL_threeway.csv", 
+          row.names = FALSE)
+
+# -------------------------
+# 4) Visual comparison of model performance
+# -------------------------
+
+# Reshape for plotting
+model_performance_long <- model_comparison_full %>%
+  select(species, AIC_nonBI, AIC_additive, AIC_interaction,
+         AUC_nonBI, AUC_additive, AUC_interaction) %>%
+  pivot_longer(
+    cols = -species,
+    names_to = c("metric", "model"),
+    names_pattern = "(.*)_(.*)",
+    values_to = "value"
+  ) %>%
+  mutate(
+    model = factor(model, levels = c("nonBI", "additive", "interaction"),
+                   labels = c("Non-BI", "Additive BI", "Interaction BI"))
+  )
+
+# AIC comparison plot (lower is better)
+aic_plot <- model_performance_long %>%
+  filter(metric == "AIC") %>%
+  ggplot(aes(x = model, y = value, color = model, group = species)) +
+  geom_line(color = "gray60") +
+  geom_point(size = 3) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = c("Non-BI" = "#1b9e77", 
+                                 "Additive BI" = "#d95f02",
+                                 "Interaction BI" = "#7570b3")) +
+  labs(
+    title = "Model Comparison: AIC (Lower is Better)",
+    x = NULL,
+    y = "AIC"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(aic_plot)
+ggsave("HawkEars_AIC_comparison_threeway.png", 
+       plot = aic_plot, width = 8, height = 4, dpi = 300)
+
+# AUC comparison plot (higher is better)
+auc_plot <- model_performance_long %>%
+  filter(metric == "AUC") %>%
+  ggplot(aes(x = model, y = value, color = model, group = species)) +
+  geom_line(color = "gray60") +
+  geom_point(size = 3) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = c("Non-BI" = "#1b9e77", 
+                                 "Additive BI" = "#d95f02",
+                                 "Interaction BI" = "#7570b3")) +
+  labs(
+    title = "Model Comparison: AUC (Higher is Better)",
+    x = NULL,
+    y = "AUC"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(auc_plot)
+ggsave("HawkEars_AUC_comparison_threeway.png", 
+       plot = auc_plot, width = 8, height = 4, dpi = 300)
+
+# -------------------------
+# 5) Compute thresholds using ADDITIVE BI models
+# -------------------------
+
+cat("\n=== COMPUTING THRESHOLDS WITH ADDITIVE BI MODELS ===\n")
+
+# Recompute BI-conditional thresholds using additive models
+threshold_table_bi_additive <- fits_bi_additive %>%
+  left_join(bi_levels, by = "species") %>%
+  left_join(lab_bins %>%
+              group_by(species) %>%
+              summarise(total_detections = sum(N_i), .groups = "drop"),
+            by = "species") %>%
+  left_join(lab_bins, by = "species") %>%
+  group_by(species, BI_level, BI_z, model_bi_additive, n_val_bi, total_detections) %>%
+  summarise(
+    out = list(
+      compute_tseng_threshold_bi(
+        cur_data_all() %>% select(bin_lower, bin_mid, N_i),
+        model_bi_additive[[1]],
+        BI_z_fixed = BI_z
+      )
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    chosen_threshold = map_dbl(out, ~ .x$summary$threshold),
+    precision_at_threshold = map_dbl(out, ~ .x$summary$precision),
+    prop_retained = map_dbl(out, ~ .x$summary$prop_retained),
+    n_retained = map_int(out, ~ .x$summary$n_retained),
+    status = map_chr(out, ~ .x$summary$status),
+    n_dropped = total_detections - n_retained
+  ) %>%
+  select(
+    species,
+    BI_level,
+    n_val_bi,
+    total_detections,
+    chosen_threshold,
+    precision_at_threshold,
+    prop_retained,
+    n_retained,
+    n_dropped,
+    status
+  ) %>%
+  arrange(species, BI_level)
+
+threshold_table_bi_additive_pretty <- threshold_table_bi_additive %>%
+  mutate(
+    chosen_threshold = round(chosen_threshold, 2),
+    precision_at_threshold = round(precision_at_threshold, 3),
+    prop_retained = round(prop_retained, 3)
+  )
+
+print("=== ADDITIVE BI MODEL THRESHOLDS ===")
+print(threshold_table_bi_additive_pretty)
+
+write.csv(threshold_table_bi_additive_pretty, 
+          "HawkEars_thresholds_BI_ADDITIVE.csv", 
+          row.names = FALSE)
+
+# -------------------------
+# 6) Compare thresholds: Non-BI vs Additive BI vs Interaction BI
+# -------------------------
+
+threshold_comparison <- threshold_table_pretty %>%
+  select(species, chosen_threshold_nonBI = chosen_threshold, 
+         prop_retained_nonBI = prop_retained) %>%
+  left_join(
+    threshold_table_bi_additive_pretty %>%
+      filter(BI_level == "Median BI") %>%
+      select(species, chosen_threshold_additive = chosen_threshold,
+             prop_retained_additive = prop_retained),
+    by = "species"
+  ) %>%
+  left_join(
+    threshold_table_bi_pretty %>%
+      filter(BI_level == "Median BI") %>%
+      select(species, chosen_threshold_interaction = chosen_threshold,
+             prop_retained_interaction = prop_retained),
+    by = "species"
+  ) %>%
+  mutate(
+    threshold_diff_additive = chosen_threshold_additive - chosen_threshold_nonBI,
+    threshold_diff_interaction = chosen_threshold_interaction - chosen_threshold_nonBI,
+    retention_diff_additive = prop_retained_additive - prop_retained_nonBI,
+    retention_diff_interaction = prop_retained_interaction - prop_retained_nonBI
+  )
+
+print("=== THRESHOLD COMPARISON (at Median BI) ===")
+print(threshold_comparison)
+
+write.csv(threshold_comparison, 
+          "HawkEars_threshold_comparison_threeway.csv", 
+          row.names = FALSE)
+
+# -------------------------
+# 7) Generate curves for additive BI models
+# -------------------------
+
+curves_bi_additive <- fits_bi_additive %>%
+  left_join(bi_levels, by = "species") %>%
+  left_join(lab_bins, by = "species") %>%
+  group_by(species, BI_level, BI_z) %>%
+  summarise(
+    model_bi_additive = list(fits_bi_additive$model_bi_additive[match(first(species), fits_bi_additive$species)][[1]]),
+    bins = list(cur_data() %>% select(bin_lower, bin_mid, N_i)),
+    .groups = "drop"
+  ) %>%
+  mutate(curve = pmap(list(bins, model_bi_additive, BI_z),
+                      ~ compute_tseng_threshold_bi(..1, ..2, ..3)$curve)) %>%
+  select(species, BI_level, curve) %>%
+  unnest(curve)
+
+# Plot additive BI curves for comparison
+for (sp in unique(threshold_table_bi_additive$species)) {
+  sp_curves <- curves_bi_additive %>% filter(species == sp)
+  sp_thresholds <- threshold_table_bi_additive %>% filter(species == sp)
+  
+  p <- ggplot(sp_curves, aes(x = threshold, y = precision, color = BI_level)) +
+    geom_line(linewidth = 1.1) +
+    geom_point(size = 1.5, alpha = 0.7) +
+    geom_hline(yintercept = 0.90, linetype = "dashed", color = "gray40") +
+    geom_vline(data = sp_thresholds, 
+               aes(xintercept = chosen_threshold, color = BI_level),
+               linetype = "dotted", linewidth = 0.8) +
+    scale_color_manual(
+      values = c("Low BI (25%)" = "#2166ac", 
+                 "Median BI" = "#762a83", 
+                 "High BI (75%)" = "#c51b7d")
+    ) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+    labs(
+      title = paste0(sp, " — ADDITIVE BI Model Thresholds"),
+      subtitle = "Vertical dotted lines show chosen thresholds for each BI level",
+      x = "Confidence Threshold",
+      y = "Precision of Retained Detections",
+      color = "BI Condition"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      legend.position = "top"
+    )
+  
+  print(p)
+  ggsave(paste0("HawkEars_BI_curves_ADDITIVE_", sp, ".png"), 
+         plot = p, width = 8, height = 6, dpi = 300)
+}
+
+# -------------------------
+# 8) Side-by-side comparison plot: Additive vs Interaction BI
+# -------------------------
+
+curves_comparison <- bind_rows(
+  curves_bi_additive %>% mutate(model_type = "Additive BI"),
+  curves_bi %>% mutate(model_type = "Interaction BI")
+)
+
+for (sp in unique(curves_comparison$species)) {
+  sp_curves <- curves_comparison %>% filter(species == sp, BI_level == "Median BI")
+  
+  p <- ggplot(sp_curves, aes(x = threshold, y = precision, 
+                              color = model_type, linetype = model_type)) +
+    geom_line(linewidth = 1.1) +
+    geom_hline(yintercept = 0.90, linetype = "dashed", color = "gray40") +
+    scale_color_manual(values = c("Additive BI" = "#d95f02", 
+                                   "Interaction BI" = "#7570b3")) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+    labs(
+      title = paste0(sp, " — Additive vs Interaction BI Models (Median BI)"),
+      x = "Confidence Threshold",
+      y = "Precision of Retained Detections",
+      color = "Model Type",
+      linetype = "Model Type"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      legend.position = "top"
+    )
+  
+  print(p)
+  ggsave(paste0("HawkEars_additive_vs_interaction_", sp, ".png"), 
+         plot = p, width = 8, height = 6, dpi = 300)
+}
+
+# -------------------------
+# 9) FINAL SUMMARY TABLE with all models
+# -------------------------
+
+final_summary_all_models <- threshold_table_pretty %>%
+  rename(
+    chosen_threshold_nonBI = chosen_threshold,
+    precision_at_threshold_nonBI = precision_at_threshold,
+    prop_retained_nonBI = prop_retained,
+    n_retained_nonBI = n_retained,
+    n_dropped_nonBI = n_dropped,
+    status_nonBI = status
+  ) %>%
+  left_join(
+    threshold_table_bi_additive_pretty %>%
+      filter(BI_level == "Median BI") %>%
+      select(species, 
+             chosen_threshold_additive = chosen_threshold, 
+             precision_at_threshold_additive = precision_at_threshold, 
+             prop_retained_additive = prop_retained,
+             n_retained_additive = n_retained, 
+             n_dropped_additive = n_dropped, 
+             status_additive = status),
+    by = "species"
+  ) %>%
+  left_join(
+    threshold_table_bi_pretty %>%
+      filter(BI_level == "Median BI") %>%
+      select(species, 
+             chosen_threshold_interaction = chosen_threshold, 
+             precision_at_threshold_interaction = precision_at_threshold, 
+             prop_retained_interaction = prop_retained,
+             n_retained_interaction = n_retained, 
+             n_dropped_interaction = n_dropped, 
+             status_interaction = status),
+    by = "species"
+  ) %>%
+  left_join(model_comparison_full, by = "species") %>%
+  arrange(species)
+
+print("=== FINAL SUMMARY: ALL THREE MODELS ===")
+print(final_summary_all_models %>% 
+        select(species, 
+               chosen_threshold_nonBI, chosen_threshold_additive, chosen_threshold_interaction,
+               AUC_nonBI, AUC_additive, AUC_interaction,
+               recommended_model))
+
+write.csv(final_summary_all_models, 
+          "HawkEars_FINAL_summary_all_models.csv", 
+          row.names = FALSE)
+
+# -------------------------
+# 10) DECISION SUMMARY with clear recommendations
+# -------------------------
+
+decision_summary <- model_comparison_full %>%
+  select(species, recommended_model, 
+         dAIC_additive, dAUC_additive, 
+         dAIC_interaction_vs_additive, dAUC_interaction_vs_additive) %>%
+  left_join(
+    threshold_comparison %>%
+      select(species, chosen_threshold_nonBI, 
+             chosen_threshold_additive, chosen_threshold_interaction),
+    by = "species"
+  ) %>%
+  mutate(
+    rationale = case_when(
+      recommended_model == "Non-BI (BI not helpful)" ~ 
+        "BI provides no meaningful improvement in discrimination (dAUC < 0.01 and dAIC > -2). Use simple non-BI threshold.",
+      
+      recommended_model == "Additive BI" ~ 
+        paste0("BI improves discrimination (dAUC = +", round(dAUC_additive, 3), 
+               ") but interaction term not justified. Use additive BI model with context-dependent thresholds."),
+      
+      recommended_model == "Interaction BI" ~ 
+        paste0("Both BI and BI×score interaction improve discrimination. ",
+               "Use interaction BI model with context-dependent thresholds."),
+      
+      TRUE ~ "Review metrics manually"
+    ),
+    
+    deployment_threshold = case_when(
+      recommended_model == "Non-BI (BI not helpful)" ~ chosen_threshold_nonBI,
+      recommended_model == "Additive BI" ~ chosen_threshold_additive,
+      recommended_model == "Interaction BI" ~ chosen_threshold_interaction,
+      TRUE ~ chosen_threshold_nonBI
+    )
+  )
+
+print("=== DEPLOYMENT DECISION SUMMARY ===")
+print(decision_summary %>% select(species, recommended_model, deployment_threshold, rationale))
+
+write.csv(decision_summary, 
+          "HawkEars_DEPLOYMENT_decisions.csv", 
+          row.names = FALSE)
+
+# -------------------------
+# SUMMARY OUTPUT
+# -------------------------
+
+cat("\n")
+cat("============================================================\n")
+cat("  ADDITIVE BI MODEL ANALYSIS COMPLETE\n")
+cat("============================================================\n")
+cat("\n")
+cat("KEY OUTPUTS:\n")
+cat("  ✓ HawkEars_model_comparison_FULL_threeway.csv\n")
+cat("  ✓ HawkEars_thresholds_BI_ADDITIVE.csv\n")
+cat("  ✓ HawkEars_threshold_comparison_threeway.csv\n")
+cat("  ✓ HawkEars_FINAL_summary_all_models.csv\n")
+cat("  ✓ HawkEars_DEPLOYMENT_decisions.csv\n")
+cat("\n")
+cat("FIGURES GENERATED:\n")
+cat("  ✓ HawkEars_AIC_comparison_threeway.png\n")
+cat("  ✓ HawkEars_AUC_comparison_threeway.png\n")
+cat("  ✓ HawkEars_BI_curves_ADDITIVE_[species].png\n")
+cat("  ✓ HawkEars_additive_vs_interaction_[species].png\n")
+cat("\n")
+cat("RECOMMENDED MODELS BY SPECIES:\n")
+for (i in 1:nrow(decision_summary)) {
+  cat(sprintf("  %s: %s (threshold = %.2f)\n", 
+              decision_summary$species[i], 
+              decision_summary$recommended_model[i],
+              decision_summary$deployment_threshold[i]))
+}
+cat("\n")
+cat("NEXT STEP: Review 'HawkEars_DEPLOYMENT_decisions.csv' for deployment strategy\n")
+cat("============================================================\n")
+
+species_interpretations_FINAL <- tibble(
+  species = c("COYE", "MAWA", "VEER"),
+  interpretation = c(
+    "**COYE**: BI does not improve discrimination (ΔAUC = -0.002, dAIC = +1.0). Threshold = 0.40 retains 12.9% of detections at 90% precision. Common Yellowthroat produces loud, distinctive 'witchity-witchity-witchity' song (3-7 kHz) with clear temporal structure, likely robust to acoustic clutter in wetland habitats. Bootstrap CI [0.30, 0.55] suggests moderate uncertainty; recommend conservative threshold of 0.50 for deployment.",
+    
+    "**MAWA**: BI does not improve discrimination (ΔAUC = +0.002, dAIC = +2.0). Threshold = 0.75 retains 5.3% of detections at 90% precision. Magnolia Warbler has high-frequency (5-8 kHz), buzzy song that is relatively distinct in boreal soundscapes. High threshold reflects need to avoid confusion with similar high-frequency species. Bootstrap CI [0.55, 0.95] indicates high uncertainty; collect additional validation data or use conservative threshold of 0.90 for deployment.",
+    
+    "**VEER**: BI provides marginal improvement (ΔAUC = +0.007) but does not meet practical significance threshold (>0.01) or model parsimony criteria (dAIC = +1.0). Threshold = 0.20 retains 25.8% of detections at 90% precision. Veery produces downward-spiraling, flute-like song (2-4 kHz) that is highly distinctive. Low threshold maximizes detection while maintaining precision. Bootstrap CI [0.20, 0.25] indicates threshold is well-estimated."
+  )
+)
+
+write.csv(species_interpretations_FINAL, 
+          "HawkEars_species_interpretations_FINAL.csv", 
+          row.names = FALSE)

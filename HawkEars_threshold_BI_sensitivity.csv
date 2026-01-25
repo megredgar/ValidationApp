@@ -1,0 +1,4 @@
+"species","chosen_threshold_High BI (75%)","chosen_threshold_Low BI (25%)","chosen_threshold_Median BI","precision_at_threshold_High BI (75%)","precision_at_threshold_Low BI (25%)","precision_at_threshold_Median BI","prop_retained_High BI (75%)","prop_retained_Low BI (25%)","prop_retained_Median BI","threshold_range","threshold_sensitivity"
+"COYE",0.4,0.4,0.4,0.912028823928376,0.91173919032292,0.912072580524827,0.128900624099856,0.128900624099856,0.128900624099856,0,"Low sensitivity to BI"
+"MAWA",0.7,0.8,0.75,0.912639163948274,0.904280653693091,0.908819595165361,0.0575079872204473,0.0482656321314468,0.0530579643998174,-0.1,"Moderate sensitivity to BI"
+"VEER",0.25,0.2,0.2,0.92677152483161,0.921554670445374,0.909206750569784,0.230810578370243,0.258009030316061,0.258009030316061,0.05,"Low sensitivity to BI"

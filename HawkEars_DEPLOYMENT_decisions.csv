@@ -1,0 +1,4 @@
+"species","recommended_model","dAIC_additive","dAUC_additive","dAIC_interaction_vs_additive","dAUC_interaction_vs_additive","chosen_threshold_nonBI","chosen_threshold_additive","chosen_threshold_interaction","rationale","deployment_threshold"
+"COYE","Non-BI (BI not helpful)",1.54821118471656,-0.00236339572698052,1.58853620039429,0.000945358290792231,0.4,0.4,0.4,"BI provides no meaningful improvement in discrimination (dAUC < 0.01 and dAIC > -2). Use simple non-BI threshold.",0.4
+"MAWA","Non-BI (BI not helpful)",1.89784822944972,0.00219833903273081,1.00101233140586,0.000610649731314084,0.75,0.75,0.75,"BI provides no meaningful improvement in discrimination (dAUC < 0.01 and dAIC > -2). Use simple non-BI threshold.",0.75
+"VEER","Non-BI (BI not helpful)",0.846602470672437,0.00705128205128203,1.78743353475188,0.000512820512820533,0.2,0.2,0.2,"BI provides no meaningful improvement in discrimination (dAUC < 0.01 and dAIC > -2). Use simple non-BI threshold.",0.2

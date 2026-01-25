@@ -1,0 +1,4 @@
+"species","threshold_median","threshold_ci_lower","threshold_ci_upper","precision_median","precision_ci_lower","precision_ci_upper","n_boot_success"
+"VEER",0.2,0.2,0.25,0.918118073780097,0.901541826370134,0.935031366354605,100
+"COYE",0.4,0.3,0.55,0.909650399173157,0.900469630040675,0.920835017427815,100
+"MAWA",0.75,0.55,0.95,0.90440513124043,0.877679885581217,0.914643356861801,100

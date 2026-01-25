@@ -1,0 +1,4 @@
+"species","chosen_threshold_nonBI","prop_retained_nonBI","chosen_threshold_additive","prop_retained_additive","chosen_threshold_interaction","prop_retained_interaction","threshold_diff_additive","threshold_diff_interaction","retention_diff_additive","retention_diff_interaction"
+"MAWA",0.75,0.053,0.75,0.053,0.75,0.053,0,0,0,0
+"COYE",0.4,0.129,0.4,0.129,0.4,0.129,0,0,0,0
+"VEER",0.2,0.258,0.2,0.258,0.2,0.258,0,0,0,0
