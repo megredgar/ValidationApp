@@ -9,9 +9,9 @@ library(av)
 
 ## ==================== CONFIG: EDIT THESE PATHS ============================
 
-labels_file  <- "E:/BAR-LT_LocalizationProject/localization_05312025/hawkears_lowthresh/HawkEars_labels.csv"
-audio_dir    <- "E:/BAR-LT_LocalizationProject/localization_05312025/localizationtrim_new"
-results_file <- "E:/BAR-LT_LocalizationProject/localization_05312025/hawkears_lowthresh/HawkEars_validation_results.csv"
+labels_file  <- "D:/BARLT Localization Project/localization_05312025/hawkears_lowthresh/HawkEars_labels.csv"
+audio_dir    <- "D:/BARLT Localization Project/localization_05312025/localizationtrim_new"
+results_file <- "D:/BARLT Localization Project/localization_05312025/hawkears_lowthresh/HawkEars_validation_results.csv"
 
 snippet_dir <- file.path(tempdir(), "hawkears_snips")
 if (!dir.exists(snippet_dir)) dir.create(snippet_dir, recursive = TRUE)

@@ -1,0 +1,295 @@
+library(tidyverse)
+
+## ------------------------------------------------------------
+## 1) DESTINATION
+## ------------------------------------------------------------
+dest_dir <- "D:/BARLT Localization Project/Wildtrax_Validation_Upload"
+dir.create(dest_dir, recursive = TRUE, showWarnings = FALSE)
+
+map_out  <- file.path(dest_dir, "rename_map_all_batches.csv")
+tags_out <- file.path(dest_dir, "wildtrax_tags_for_validation_all_batches.csv")
+
+## ------------------------------------------------------------
+## 2) TARGET SPECIES
+## ------------------------------------------------------------
+target_species <- c("BAWW","CONW","AMRE","ALFL","AMBI","NAWA","REVI","SWSP","TEWA","SORA","WTSP") |>
+  unique()
+
+## ------------------------------------------------------------
+## 3) DEFINE BATCHES (recording folder + labels)
+## ------------------------------------------------------------
+batches <- tribble(
+  ~batch_id,   ~src_dir,                                                                 ~labels_csv,
+  "20250531",  "D:/BARLT Localization Project/localization_05312025/localizationtrim_new", "D:/BARLT Localization Project/localization_05312025/hawkears_lowthresh/HawkEars_labels.csv",
+  "20250602",  "D:/BARLT Localization Project/localization_06022025/localizationtrim",     "D:/BARLT Localization Project/localization_06022025/hawkears_lowthresh/HawkEars_labels.csv",
+  "20250608",  "D:/BARLT Localization Project/localization_06082025/localizationtrim",     "D:/BARLT Localization Project/localization_06082025/hawkears_lowthresh/HawkEars_labels.csv",
+  "20250610",  "D:/BARLT Localization Project/localization_06102025/localizationtrim",     "D:/BARLT Localization Project/localization_06102025/hawkears_lowthresh/HawkEars_labels.csv"
+)
+
+## ------------------------------------------------------------
+## 4) HELPER: BUILD MAP + COPY FILES FOR ONE BATCH
+##    Filename pattern example:
+##    L1N1E1_S20250531T052140.421178-0500_E20250531T055140.291080-0500_+51.34246-96.96062_resampled_HawkEars.wav
+## ------------------------------------------------------------
+make_map_and_copy <- function(batch_id, src_dir, dest_dir) {
+
+  files <- list.files(src_dir, pattern = "\\.wav$", full.names = TRUE)
+  if (length(files) == 0) stop("No .wav files found in: ", src_dir)
+
+  fn <- basename(files)
+
+  # site/recorder ID: everything before first underscore
+  recorder <- sub("_.*", "", fn)
+
+  # Extract ONLY the 14 digits after _SYYYYMMDDTHHMMSS (ignore fractional seconds & tz)
+  # Result: "YYYYMMDD_HHMMSS"
+  datetime_str <- sub(".*_S(\\d{8})T(\\d{6}).*", "\\1_\\2", fn)
+
+  # Validate parse
+  ok_dt <- stringr::str_detect(datetime_str, "^\\d{8}_\\d{6}$")
+  if (!all(ok_dt)) {
+    bad <- fn[!ok_dt] |> head(10)
+    stop(
+      "Datetime parsing failed in batch ", batch_id, " (", src_dir, "). Examples:\n",
+      paste0("  - ", bad, collapse = "\n")
+    )
+  }
+
+  # New filename: include batch_id to avoid collisions across folders
+  new_fn <- paste0("BARLT-", recorder, "_", datetime_str, ".wav")
+
+  new_paths <- file.path(dest_dir, new_fn)
+
+  # Prevent duplicates within batch
+  if (any(duplicated(new_fn))) {
+    dupes <- new_fn[duplicated(new_fn)] |> head(10)
+    stop("Duplicate new filenames within batch ", batch_id, ". Examples:\n", paste(dupes, collapse = "\n"))
+  }
+
+  # Copy (do NOT overwrite by default)
+  copy_ok <- file.copy(files, new_paths, overwrite = FALSE)
+  if (!all(copy_ok)) {
+    failed <- files[!copy_ok] |> head(10)
+    stop("Some files failed to copy (batch ", batch_id, "). Examples:\n", paste(failed, collapse = "\n"))
+  }
+
+  # Note: This datetime is "naive" (no timezone applied). We keep it as UTC for WT consistency.
+  dt <- as.POSIXct(datetime_str, format = "%Y%m%d_%H%M%S", tz = "UTC")
+  site <- paste0("BARLT-", recorder)
+
+  tibble(
+    batch_id      = batch_id,
+    src_dir       = src_dir,
+    old_full_path = files,
+    old_filename  = fn,
+    new_full_path = new_paths,
+    new_filename  = new_fn,
+    site          = site,
+    datetime_utc  = dt
+  )
+}
+
+## ------------------------------------------------------------
+## 5) BUILD COMBINED MAP + COPY ALL WAVS
+## ------------------------------------------------------------
+rename_map <- pmap_dfr(
+  list(batches$batch_id, batches$src_dir),
+  ~ make_map_and_copy(batch_id = ..1, src_dir = ..2, dest_dir = dest_dir)
+)
+getwd()
+
+write.csv(rename_map, map_out, row.names = FALSE)
+
+## ------------------------------------------------------------
+## 6) READ ALL HAWKEARS LABELS
+## ------------------------------------------------------------
+read_labels_one <- function(batch_id, labels_csv) {
+  he <- read.csv(labels_csv) |> as_tibble()
+
+  # Adjust here if your HawkEars export uses different column names
+  required <- c("filename", "start_time", "score", "class_code")
+  missing <- setdiff(required, names(he))
+  if (length(missing) > 0) {
+    stop("Labels file missing columns in batch ", batch_id, ": ", paste(missing, collapse = ", "))
+  }
+
+  he %>%
+    mutate(
+      batch_id = batch_id,
+      filename = basename(filename),
+      score = as.numeric(score)
+    )
+}
+
+labels_all <- map2_dfr(batches$batch_id, batches$labels_csv, read_labels_one)
+
+labels_filt <- labels_all %>%
+  filter(class_code %in% target_species)
+
+## ------------------------------------------------------------
+## 7) STRATIFIED SAMPLING
+## ------------------------------------------------------------
+
+TSENG_MIN  <- 0.10
+TSENG_MAX  <- 1.00
+TSENG_STEP <- 0.05
+
+# Fixed bin labels: 0.10–0.15, ..., 0.95–1.00 (18 bins)
+tseng_lowers <- seq(TSENG_MIN, TSENG_MAX - TSENG_STEP, by = TSENG_STEP)
+tseng_uppers <- tseng_lowers + TSENG_STEP
+tseng_bins   <- paste0(sprintf("%.2f", tseng_lowers), "–", sprintf("%.2f", tseng_uppers))
+
+# Breaks for cut(): left-closed [a,b); add tiny epsilon so 1.00 lands in last bin
+tseng_breaks <- c(tseng_lowers, TSENG_MAX + 1e-9)
+
+set.seed(123)
+n_per_bin <- 12
+
+validation <- labels_filt %>%
+  mutate(
+    score = as.numeric(score),
+    score_bin = cut(score, breaks = tseng_breaks, labels = tseng_bins,
+                    include.lowest = TRUE, right = FALSE),
+    .rand = runif(n())
+  ) %>%
+  filter(!is.na(score_bin)) %>%
+  group_by(class_code, score_bin) %>%          # <-- NOTE: batch_id removed
+  arrange(.rand, .by_group = TRUE) %>%
+  slice_head(n = n_per_bin) %>%
+  ungroup() %>%
+  group_by(class_code) %>%
+  mutate(individual_number = row_number()) %>%
+  ungroup() %>%
+  select(-.rand)
+
+
+## ------------------------------------------------------------
+## 8) JOIN VALIDATION TO MAP
+## ------------------------------------------------------------
+library(dplyr)
+library(stringr)
+
+norm_wav <- function(x) {
+  x <- basename(x)
+  x <- str_replace(x, "(?i)_HawkEars(?=\\.wav$)", "")  # drop optional _HawkEars
+  x <- str_replace(x, "(?i)\\.wav$", ".wav")           # standardize extension
+  x
+}
+
+rename_map <- rename_map %>% mutate(file_key = norm_wav(old_filename))
+validation <- validation %>% mutate(file_key = norm_wav(filename))
+validation_joined <- validation %>%
+  left_join(
+    rename_map %>% 
+      select(file_key, site, datetime_utc, new_filename, new_full_path),
+    by = "file_key"
+  )
+
+rename_map <- rename_map %>%
+  mutate(
+    new_filename  = sub("^BARLT-", "", new_filename),
+    new_full_path = file.path(dirname(new_full_path), new_filename),
+    site          = sub("^BARLT-", "", site)   # "BARLT-L1N3E3" -> "L1N3E3"
+  )
+
+write.csv(rename_map, tags_out)
+
+#------------------------------------------------------
+## 9) FORMAT WILDTRAX TAG UPLOAD
+## ------------------------------------------------------------
+
+
+validation_joined <- validation_joined %>%
+  mutate(
+    site = sub("^BARLT-", "", site),
+    new_filename  = sub("^BARLT-", "", new_filename),
+    new_full_path = file.path(dirname(new_full_path), new_filename)
+  )
+
+
+wt_tags <- validation_joined %>%
+  transmute(
+    location = site,
+    recording_date_time = datetime_utc,
+    task_duration = 600,
+    task_method = "None",
+    observer = "Not Assigned",
+    species_code = class_code,
+    individual_number = individual_number,
+    vocalization = "Song",
+    abundance = 1,
+    tag_start_time = start_time,
+    tag_duration = 3,
+    min_tag_freq = 0,
+    max_tag_freq = 12000,
+    species_individual_comments = score,
+    tag_is_hidden_for_verification = "f",
+    recording_sample_frequency = 44100,
+    internal_tag_id = NA
+  )
+
+  # ensure internal_tag_id is character and replace any NA with empty string
+  wt_tags <- wt_tags %>%
+    mutate(
+      internal_tag_id = as.character(internal_tag_id),
+      internal_tag_id = ifelse(is.na(internal_tag_id), "", internal_tag_id)
+    )
+
+ write.csv(wt_tags, tags_out, row.names = FALSE)
+
+
+
+message("Done.\nCopied+renamed wavs into: ", dest_dir,
+        "\nMap:  ", map_out,
+        "\nTags: ", tags_out)
+
+
+
+tags_per_bin_species <- validation_joined %>%
+  count(species_code = class_code, score_bin, name = "n_tags") %>%
+  arrange(species_code, score_bin)
+
+print(tags_per_bin_species, n = Inf, width = Inf)
+
+task_conflicts <- wt_tags %>%
+  group_by(location, recording_date_time) %>%
+  summarise(
+    n_tags = n(),
+    n_task_duration = n_distinct(task_duration),
+    n_task_method   = n_distinct(task_method),
+    n_observer      = n_distinct(observer),
+    n_fs            = n_distinct(recording_sample_frequency),
+    .groups = "drop"
+  ) %>%
+  filter(n_task_duration > 1 | n_task_method > 1 | n_observer > 1 | n_fs > 1)
+
+task_conflicts
+
+
+
+##################
+
+dest_dir <- "D:/BARLT Localization Project/Wildtrax_Validation_Upload"
+
+# list copied wavs in destination
+dest_files <- list.files(dest_dir, pattern = "\\.wav$", full.names = TRUE)
+dest_fn <- basename(dest_files)
+
+# new names: drop leading "BARLT-" only if present
+new_dest_fn <- sub("^BARLT-", "", dest_fn)
+new_dest_paths <- file.path(dest_dir, new_dest_fn)
+
+# safety: stop if any duplicates would be created
+if (any(duplicated(new_dest_fn))) {
+  dupes <- new_dest_fn[duplicated(new_dest_fn)]
+  stop("Dropping BARLT- would create duplicate filenames. Examples:\n",
+       paste(head(dupes, 20), collapse = "\n"))
+}
+
+# rename files
+ok <- file.rename(dest_files, new_dest_paths)
+if (!all(ok)) {
+  stop("Some files failed to rename in destination. Examples:\n",
+       paste(head(dest_files[!ok], 20), collapse = "\n"))
+}
+

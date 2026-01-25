@@ -1,0 +1,18 @@
+Table X. Species-specific HawkEars confidence thresholds (
+𝑇
+∗
+T
+∗
+) selected using a Tseng-style calibration to achieve a target precision of 0.90. For each species, we report the validation sample size (
+𝑛
+val
+n
+val
+	​
+
+), total detections, the chosen threshold and resulting precision, and the number and proportion of detections retained (and dropped) after applying 
+𝑇
+∗
+T
+∗
+.

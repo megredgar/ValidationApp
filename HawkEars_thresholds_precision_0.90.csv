@@ -1,0 +1,4 @@
+species,n_val,total_detections,chosen_threshold,precision_at_threshold,prop_retained,n_retained,n_dropped,status
+MAWA,181,8764,0.75,0.907,0.053,465,8299,hit_target
+COYE,166,8332,0.4,0.913,0.129,1074,7258,hit_target
+VEER,181,9302,0.2,0.907,0.258,2400,6902,hit_target

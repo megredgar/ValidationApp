@@ -11,8 +11,8 @@ library(purrr)
 library(tidyr)
 
 # ---- CSVs ----
-validation<- read.csv("E:/BAR-LT_LocalizationProject/localization_05312025/hawkears_lowthresh/HawkEars_validation_results.csv")
-labels <- read.csv("E:/BAR-LT_LocalizationProject/localization_05312025/hawkears_lowthresh/HawkEars_labels.csv")
+validation<- read.csv("D:/BARLT Localization Project/localization_05312025/hawkears_lowthresh/HawkEars_validation_results.csv")
+labels <- read.csv("D:/BARLT Localization Project/localization_05312025/hawkears_lowthresh/HawkEars_labels.csv")
 
 
 
@@ -31,7 +31,7 @@ threshold_grid <- seq(min_conf, fallback_threshold, by = step)
 # -------------------------
 val <- as_tibble(validation) %>%
   mutate(
-    species = class_code,  # use class_code to avoid name mismatches
+    species = class_code,
     score   = as.numeric(score),
     tp = case_when(
       tolower(label) %in% c("yes","y","true","1","present") ~ 1L,
@@ -42,7 +42,7 @@ val <- as_tibble(validation) %>%
   filter(!is.na(tp), !is.na(score), !is.na(species)) %>%
   filter(score >= min_conf, score <= max_conf)
 
-# Fit logistic regression per species (Tseng: GLM binomial, score predictor) 
+val_models <- val %>%
   group_by(species) %>%
   nest() %>%
   mutate(
@@ -50,6 +50,9 @@ val <- as_tibble(validation) %>%
     n_val = map_int(data, nrow)
   ) %>%
   select(species, model, n_val)
+fits <- val_models
+
+
 
 # -------------------------
 # 2) Bin full labels into 0.05 confidence classes and count N_i per species
@@ -120,6 +123,24 @@ results <- fits %>%
 
 print(results)
 
+curves <- fits %>%
+  select(species, model) %>%
+  left_join(lab_bins, by="species") %>%
+  group_by(species) %>%
+  summarise(
+    model = list(first(model)),
+    bins = list(cur_data() %>% select(bin_lower, bin_mid, N_i)),
+    .groups="drop"
+  ) %>%
+  mutate(curve = map2(bins, model, ~ compute_tseng_threshold(.x, .y)$curve)) %>%
+  select(species, curve) %>%
+  unnest(curve)
+
+plot(curves)
+
+
+
+
 # -------------------------
 #  plot the precision curve for one species (Tseng Fig.5-style) - UGLY RIGHT NOW!!!! 
 # -------------------------
@@ -160,371 +181,645 @@ plot_species <- function(species_code, target = 0.90) {
 
 # Example:
 plot_species("VEER", target=0.9)
+plot_species("COYE", target=0.9)
+plot_species("MAWA", target=0.9)
+
+
+
+## ggplot version ## 
+plot_species_gg_onepanel <- function(species_code, target = 0.90) {
+  sp_fit  <- fits %>% dplyr::filter(species == species_code)
+  sp_bins <- lab_bins %>% dplyr::filter(species == species_code)
+  if (nrow(sp_fit) == 0 || nrow(sp_bins) == 0) stop("No fit/bins for that species.")
+
+  out <- compute_tseng_threshold(
+    sp_bins %>% dplyr::select(bin_lower, bin_mid, N_i),
+    sp_fit$model[[1]]
+  )
+
+  d <- out$curve %>% dplyr::arrange(threshold)
+  thr_star <- out$summary$threshold
+
+  # Build long data for clean ggplot mapping
+  d_long <- d %>%
+    dplyr::select(threshold, precision, prop_retained) %>%
+    tidyr::pivot_longer(
+      cols = c(precision, prop_retained),
+      names_to = "metric",
+      values_to = "value"
+    ) %>%
+    dplyr::mutate(
+      metric = dplyr::recode(metric,
+        precision = "Precision",
+        prop_retained = "Proportion retained"
+      )
+    )
+
+  ggplot2::ggplot(d_long, ggplot2::aes(x = threshold, y = value, linetype = metric)) +
+    ggplot2::geom_line(linewidth = 1.1) +
+    ggplot2::geom_point(size = 1.6, alpha = 0.85) +
+    ggplot2::geom_hline(yintercept = target, linetype = "dashed", linewidth = 0.8) +
+    ggplot2::geom_vline(xintercept = thr_star, linetype = "dotdash", linewidth = 0.8) +
+    ggplot2::scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, by = 0.2),
+      name = "Precision of retained detections",
+      sec.axis = ggplot2::sec_axis(~ ., name = "Proportion of detections retained")
+    ) +
+    ggplot2::scale_x_continuous(name = "Confidence threshold (T)") +
+    ggplot2::scale_linetype_manual(values = c("Precision" = "solid", "Proportion retained" = "solid")) +
+    ggplot2::labs(
+      title = paste0(species_code, " — Tseng-style threshold (precision + retained)"),
+      subtitle = paste0("Chosen threshold T* = ", format(thr_star, digits = 3),
+                        " | Target precision = ", target),
+      linetype = NULL
+    ) +
+    ggplot2::annotate(
+      "text",
+      x = thr_star,
+      y = 0.98,
+      label = paste0("T* = ", format(thr_star, digits = 3)),
+      hjust = -0.05,
+      vjust = 1,
+      size = 3.6
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold"),
+      plot.subtitle = ggplot2::element_text(size = 10),
+      panel.grid.minor = ggplot2::element_blank(),
+      axis.title.y.right = ggplot2::element_text(margin = ggplot2::margin(l = 10)),
+      legend.position = "top"
+    )
+}
+
+# Examples:
+plot_species_gg_onepanel("VEER", target = 0.9)
+plot_species_gg_onepanel("COYE", target = 0.9)
+plot_species_gg_onepanel("MAWA", target = 0.9)
 
 
 
 
-##### ok now building on this GLM with bioacoustic indices ####
-## does soundscape interference matter?? #
 
-library(tidyverse)
+
+
+
+
+
+
+
+
+
+## table to show the results quantitatively 
+
+compute_tseng_threshold <- function(df_bins, model) {
+  df_bins <- df_bins %>%
+    mutate(
+      TPR_i = predict(model, newdata = data.frame(score = bin_mid), type = "response"),
+      NTP_i = TPR_i * N_i,
+      NFP_i = (1 - TPR_i) * N_i
+    )
+
+  curve <- purrr::map_dfr(threshold_grid, function(T) {
+    kept <- df_bins %>% dplyr::filter(bin_lower >= T)
+    denom <- sum(kept$NTP_i + kept$NFP_i)
+    prec  <- if (denom == 0) NA_real_ else sum(kept$NTP_i) / denom
+    retained <- if (sum(df_bins$N_i) == 0) NA_real_ else sum(kept$N_i) / sum(df_bins$N_i)
+
+    tibble::tibble(
+      threshold = T,
+      precision = prec,
+      prop_retained = retained,
+      n_retained = sum(kept$N_i)
+    )
+  })
+
+  hit <- curve %>%
+    dplyr::filter(!is.na(precision), precision >= target_precision) %>%
+    dplyr::arrange(threshold) %>%
+    dplyr::slice(1)
+
+  status <- "hit_target"
+  if (nrow(hit) == 0) {
+    hit <- curve %>% dplyr::filter(threshold == fallback_threshold)
+    status <- "fallback"
+  }
+
+  hit <- hit %>% dplyr::mutate(status = status)
+
+  list(summary = hit, curve = curve, bins = df_bins)
+}
+
+threshold_table <- fits %>%
+  dplyr::select(species, model, n_val) %>%
+  dplyr::left_join(lab_bins %>% dplyr::group_by(species) %>%
+                     dplyr::summarise(total_detections = sum(N_i), .groups = "drop"),
+                   by = "species") %>%
+  dplyr::left_join(lab_bins, by = "species") %>%
+  dplyr::group_by(species, model, n_val, total_detections) %>%
+  dplyr::summarise(
+    out = list(
+      compute_tseng_threshold(
+        dplyr::cur_data_all() %>% dplyr::select(bin_lower, bin_mid, N_i),
+        model[[1]]
+      )
+    ),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    chosen_threshold = purrr::map_dbl(out, ~ .x$summary$threshold),
+    precision_at_threshold = purrr::map_dbl(out, ~ .x$summary$precision),
+    prop_retained = purrr::map_dbl(out, ~ .x$summary$prop_retained),
+    n_retained = purrr::map_int(out, ~ .x$summary$n_retained),
+    status = purrr::map_chr(out, ~ .x$summary$status),
+    n_dropped = total_detections - n_retained
+  ) %>%
+  dplyr::select(
+    species,
+    n_val,
+    total_detections,
+    chosen_threshold,
+    precision_at_threshold,
+    prop_retained,
+    n_retained,
+    n_dropped,
+    status
+  ) %>%
+  dplyr::arrange(dplyr::desc(chosen_threshold), species)
+
+threshold_table
+
+
+
+threshold_table_pretty <- threshold_table %>%
+  dplyr::mutate(
+    chosen_threshold = round(chosen_threshold, 2),
+    precision_at_threshold = round(precision_at_threshold, 3),
+    prop_retained = round(prop_retained, 3)
+  )
+
+readr::write_csv(threshold_table_pretty, "HawkEars_thresholds_precision_0.90.csv")
+
+
+
+
+
+# ============================================================
+# Bioacoustic Index (BI) +  BI-aware thresholding
+# ============================================================
+
+# ---- new packages ----
+#install.packages(c("tuneR","soundecology","readr","ggplot2"))  # if needed
 library(tuneR)
-library(seewave)
+library(soundecology)
+library(readr)
+library(ggplot2)
 
 # -------------------------
-# Paths
+# BI settings (simple + "canned")
 # -------------------------
-val_path   <- "E:/BAR-LT_LocalizationProject/localization_05312025/hawkears_lowthresh/HawkEars_validation_results.csv"
-audio_root <- "E:/BAR-LT_LocalizationProject/localization_05312025/localizationtrim_new"
+audio_root <- "D:/BARLT Localization Project/localization_05312025/localizationtrim_new"  # CHANGE if needed
+bi_win_sec <- 6                         # window length around clip midpoint
+bi_min_freq <- 2000                     # typical bird band for BI
+bi_max_freq <- 8000
+bi_fft_w <- 512
 
 # -------------------------
-# Noise metric band definitions (can edit if we think of other things)
+# Helper: safe z-score
 # -------------------------
-LF_band <- c(0, 1000)          # wind/handling/engines often live here
-HF_band <- c(6000, 10000)      # insects/hiss often live here
-entropy_band <- c(200, 10000)  # avoid DC/very low junk
+z <- function(x) {
+  s <- sd(x, na.rm = TRUE)
+  if (!is.finite(s) || s == 0) return(rep(0, length(x)))
+  (x - mean(x, na.rm = TRUE)) / s
+}
 
 # -------------------------
-# OPTIONAL BUT HIGHLY RECOMMENDED (MEG THINKS): species call-frequency windows (Hz)
+# Helper: read window centered on clip, shift at file edges
+# -------------------------
+safe_read_window <- function(path, mid_sec, win_sec) {
+  start1 <- mid_sec - win_sec/2
+  end1   <- mid_sec + win_sec/2
+
+  try_read <- function(from_s, to_s) {
+    tryCatch({
+      w <- tuneR::readWave(path, from = max(0, from_s), to = max(0, to_s), units = "seconds")
+      if (w@stereo) w <- tuneR::mono(w, which = "left")
+      if (length(w@left) < 64) stop("too_short")
+      w
+    }, error = function(e) NULL)
+  }
+
+  # 1) centered
+  w <- try_read(start1, end1)
+  if (!is.null(w)) return(list(wave = w, win_type = "centered"))
+
+  # 2) shift left (window ends at mid)
+  w <- try_read(mid_sec - win_sec, mid_sec)
+  if (!is.null(w)) return(list(wave = w, win_type = "left_shift"))
+
+  # 3) shift right (window starts at mid)
+  w <- try_read(mid_sec, mid_sec + win_sec)
+  if (!is.null(w)) return(list(wave = w, win_type = "right_shift"))
+
+  # 4) fallback (file start)
+  w <- try_read(0, win_sec)
+  if (!is.null(w)) return(list(wave = w, win_type = "file_start"))
+
+  list(wave = NULL, win_type = "failed")
+}
 
 # -------------------------
-call_bands <- tribble(
-  ~species, ~call_low, ~call_high,
-  "VEER",   2000,      6000
-  # "ADD A NICE BIRD HERE",   300,       900,
-  # "ADD ANOTHER COOL BIRD, EWPW PERHAPS?",   3000,      8000,
-)
+# Helper: compute BI from soundecology
+# -------------------------
+calc_bi <- function(w) {
+  bi <- tryCatch(
+    soundecology::bioacoustic_index(w, min_freq = bi_min_freq, max_freq = bi_max_freq, fft_w = bi_fft_w),
+    error = function(e) NULL
+  )
+  if (is.null(bi)) return(NA_real_)
+  as.numeric(bi$left_area)
+}
 
 # -------------------------
-# 1) Read validation + build wav index
+# 1) Re-read validation with timing + join to wav paths
+#    (assumes validation has filename + start_time + end_time)
 # -------------------------
-validation <- readr::read_csv(val_path, show_col_types = FALSE) %>%
+wav_index <- tibble::tibble(
+  wav_path = list.files(audio_root, pattern = "\\.wav$", recursive = TRUE, full.names = TRUE)
+) %>%
+  dplyr::mutate(filename = basename(wav_path)) %>%
+  dplyr::distinct(filename, .keep_all = TRUE)
+
+val_bi <- as_tibble(validation) %>%
   mutate(
-    score = as.numeric(score),
-    species = as.character(class_code),
+    species = class_code,
+    score   = as.numeric(score),
     tp = case_when(
       tolower(label) %in% c("yes","y","true","1","present") ~ 1L,
       tolower(label) %in% c("no","n","false","0","absent")  ~ 0L,
       TRUE ~ NA_integer_
     ),
-    dur = as.numeric(end_time - start_time)
+    start_time = as.numeric(start_time),
+    end_time   = as.numeric(end_time),
+    clip_mid   = (start_time + end_time) / 2
   ) %>%
-  filter(!is.na(tp), !is.na(score), !is.na(species)) %>%
-  filter(dur > 0)
+  filter(!is.na(tp), !is.na(score), !is.na(species), !is.na(clip_mid)) %>%
+  filter(score >= min_conf, score <= max_conf) %>%
+  left_join(wav_index, by = "filename")
 
-wav_index <- tibble(
-  wav_path = list.files(audio_root, pattern = "\\.wav$", recursive = TRUE, full.names = TRUE)
-) %>%
-  mutate(filename = basename(wav_path)) %>%
-  distinct(filename, .keep_all = TRUE)  # assumes basename is unique
-
-val2 <- validation %>%
-  left_join(wav_index, by = "filename") %>%
-  left_join(call_bands, by = c("species" = "species"))
-
-if (any(is.na(val2$wav_path))) {
-  print(val2 %>% filter(is.na(wav_path)) %>% distinct(filename) %>% head(50))
+if (any(is.na(val_bi$wav_path))) {
+  print(val_bi %>% filter(is.na(wav_path)) %>% distinct(filename) %>% head(50))
   stop("Some validation filenames were not found under audio_root.")
 }
 
 # -------------------------
-# 2) Audio reading: exact 3-sec window
+# 2) Compute BI per validation row
 # -------------------------
-read_clip <- function(path, start_sec, end_sec) {
-  w <- tuneR::readWave(path, from = start_sec, to = end_sec, units = "seconds")
-  if (w@stereo) w <- tuneR::mono(w, which = "left")
-  w
-}
-
-# -------------------------
-# 3) Spectral metrics from a Wave object
-#    - band powers from a power spectrum
-#    - Shannon spectral entropy (0..1)
-#    -  call band power + simple SNR-like ratio
-# -------------------------
-power_spectrum_fft <- function(w) {
-  if (w@stereo) w <- tuneR::mono(w, which = "left")
-  
-  x <- w@left / (2^(w@bit - 1))      # scale to ~[-1,1]
-  n <- length(x)
-  if (n < 64) return(NULL)
-  
-  # Hann window
-  win <- 0.5 - 0.5 * cos(2*pi*(0:(n-1))/(n-1))
-  xw  <- x * win
-  
-  X <- fft(xw)
-  
-  # one-sided spectrum
-  kmax <- floor(n/2) + 1
-  P <- Mod(X[1:kmax])^2
-  f <- (0:(kmax-1)) * (w@samp.rate / n)
-  
-  list(freq = f, power = P)
-}
-
-bandpower_from_spec <- function(freq, power, f_lo, f_hi) {
-  if (!is.finite(f_lo) || !is.finite(f_hi) || f_hi <= f_lo) return(NA_real_)
-  
-  keep <- is.finite(freq) & is.finite(power) & (freq >= f_lo) & (freq < f_hi)
-  if (sum(keep) == 0) return(0)        # 0 is often nicer than NA for "no energy in band"
-  sum(power[keep], na.rm = TRUE)
-}
-
-spectral_entropy <- function(freq, power, f_lo, f_hi) {
-  if (!is.finite(f_lo) || !is.finite(f_hi) || f_hi <= f_lo) return(NA_real_)
-  
-  keep <- is.finite(freq) & is.finite(power) & (freq >= f_lo) & (freq < f_hi)
-  if (sum(keep) < 10) return(NA_real_)
-  
-  p <- power[keep]
-  p <- p[p > 0]
-  if (length(p) < 10) return(NA_real_)
-  
-  p <- p / sum(p)
-  H <- -sum(p * log(p))
-  H / log(length(p))  # normalized 0..1
-}
-
-calc_metrics_3sec <- function(path, start_sec, end_sec,
-                              LF_band, HF_band, entropy_band,
-                              call_low = NA_real_, call_high = NA_real_) {
-  out <- tryCatch({
-    w <- read_clip(path, start_sec, end_sec)
-    
-    nyq <- w@samp.rate / 2
-    lf <- c(max(0, LF_band[1]), min(nyq, LF_band[2]))
-    hf <- c(max(0, HF_band[1]), min(nyq, HF_band[2]))
-    eb <- c(max(0, entropy_band[1]), min(nyq, entropy_band[2]))
-    
-    sp <- power_spectrum_fft(w)
-    if (is.null(sp)) stop("spectrum_failed")
-    
-    freq  <- sp$freq
-    power <- sp$power
-    
-    LF_power <- bandpower_from_spec(freq, power, lf[1], lf[2])
-    HF_power <- bandpower_from_spec(freq, power, hf[1], hf[2])
-    entropy  <- spectral_entropy(freq, power, eb[1], eb[2])
-    
-    CALL_power <- NA_real_
-    OFF_power  <- NA_real_
-    CALL_SNR   <- NA_real_
-    
-    if (is.finite(call_low) && is.finite(call_high)) {
-      cl <- c(max(0, call_low), min(nyq, call_high))
-      if (cl[2] > cl[1]) {
-        CALL_power <- bandpower_from_spec(freq, power, cl[1], cl[2])
-        
-        # Off-band = entropy band excluding call band
-        in_call <- is.finite(freq) & (freq >= cl[1]) & (freq < cl[2])
-        in_ent  <- is.finite(freq) & (freq >= eb[1]) & (freq < eb[2])
-        off_idx <- in_ent & !in_call
-        
-        OFF_power <- if (any(off_idx, na.rm = TRUE)) sum(power[off_idx], na.rm = TRUE) else NA_real_
-        
-        CALL_SNR <- if (is.finite(CALL_power) && is.finite(OFF_power) && OFF_power > 0) {
-          CALL_power / OFF_power
-        } else NA_real_
-      }
-    }
-    
-    tibble(
-      LF_power = LF_power,
-      HF_power = HF_power,
-      entropy  = entropy,
-      CALL_power = CALL_power,
-      CALL_SNR   = CALL_SNR,
-      ok = TRUE,
-      err = NA_character_
-    )
-  }, error = function(e) {
-    tibble(
-      LF_power = NA_real_, HF_power = NA_real_, entropy = NA_real_,
-      CALL_power = NA_real_, CALL_SNR = NA_real_,
-      ok = FALSE, err = as.character(e$message)
-    )
-  })
-  
-  out
-}
-
-# -------------------------
-# 4) Compute metrics for each validated row
-# -------------------------
-val_metrics <- val2 %>%
-  mutate(metrics = pmap(
-    list(wav_path, start_time, end_time, call_low, call_high),
-    ~ calc_metrics_3sec(..1, ..2, ..3,
-                        LF_band = LF_band, HF_band = HF_band, entropy_band = entropy_band,
-                        call_low = ..4, call_high = ..5)
-  )) %>%
-  unnest(metrics)
-
-# Inspect failures
-val_metrics %>%
-  filter(!ok) %>%
-  select(filename, start_time, end_time, err) %>%
-  print(n = 50)
-
-# Keep successful rows
-dat <- val_metrics %>%
-  filter(ok) %>%
-  drop_na(LF_power, HF_power, entropy)
-
-# -------------------------
-# 5) Fit calibration GLM
-#  main effects + one interaction you care about.
-#  note to megan --> just doing one interaction for now because we probably need more validations
-# -------------------------
-# Manual z-scoring (so predict() behaves)
-z <- function(x) (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
-
-dat <- dat %>%
+val_bi <- val_bi %>%
+  mutate(win = purrr::map2(wav_path, clip_mid, ~ safe_read_window(.x, .y, bi_win_sec))) %>%
   mutate(
-    LF_z = z(LF_power),
-    HF_z = z(HF_power),
-    ent_z = z(entropy),
-    CALL_z = if (all(is.na(CALL_power))) NA_real_ else z(CALL_power),
-    SNR_z  = if (all(is.na(CALL_SNR))) NA_real_ else z(CALL_SNR)
-  )
+    win_type = purrr::map_chr(win, "win_type"),
+    wave_obj = purrr::map(win, "wave"),
+    BI_raw   = purrr::map_dbl(wave_obj, ~ if (is.null(.x)) NA_real_ else calc_bi(.x))
+  ) %>%
+  select(-win, -wave_obj) %>%
+  filter(!is.na(BI_raw))
 
-m <- glm(tp ~ score + LF_z + HF_z + ent_z + score:LF_z,
-         data = dat, family = binomial())
+# Optional QC: how often do we have to shift the window?
+val_bi %>%
+  count(win_type) %>%
+  arrange(desc(n)) %>%
+  print()
 
-summary(m)
-
-
-##  plots 
-
-
-library(data.table)
-library(tidyverse)
-library(ggplot2)
-
-# Tseng binning settings
-min_conf <- 0.10
-max_conf <- 1.00
-step <- 0.05
-threshold_grid <- seq(min_conf, 0.95, by = step)
-target_precision <- 0.90
-
-# Build N_i (how many detections occur in each 0.05 bin) from the FULL labels file
-labels_dt <- as.data.table(labels)
-labels_dt[, score := as.numeric(score)]
-labels_dt <- labels_dt[!is.na(score)]
-labels_dt <- labels_dt[score >= min_conf & score <= max_conf]
-
-# Only species validated
-validated_species <- unique(dat$species) %||% unique(dat$class_code)
-
-
-labels_dt <- labels_dt[class_code %in% validated_species]
-
-labels_dt[, bin_lower := min_conf + floor((score - min_conf)/step)*step]
-labels_dt[bin_lower < min_conf, bin_lower := min_conf]
-labels_dt[bin_lower > 0.95, bin_lower := 0.95]
-labels_dt[, bin_mid := bin_lower + step/2]
-
-
-Ni <- labels_dt[, .(N_i = .N), by = .(species = class_code, bin_lower, bin_mid)] %>%
-  as_tibble()
-
-Ni %>% arrange(species, bin_lower) %>% print(n = 50)
-
-### HELLO - STOP RIGHT THERE! 
-### THIS IS IMPORTANT FOR PLOTTING AND PICKING THRESHOLDS!!!!! 
-
-# maybe some of these scenarios below would be based on different weaather? 
-
-# Define LF conditions using validated-data, hold HF/entropy at medians aka constant
-LF_lo <- quantile(dat$LF_z, 0.25, na.rm = TRUE)
-LF_hi <- quantile(dat$LF_z, 0.75, na.rm = TRUE)
-HF_med  <- median(dat$HF_z,  na.rm = TRUE)
-ent_med <- median(dat$ent_z, na.rm = TRUE)
-
-cond_lf <- tibble(
-  LF_level = c("Low LF (25%)", "High LF (75%)"),
-  LF_z  = c(LF_lo, LF_hi),
-  HF_z  = c(HF_med, HF_med),
-  ent_z = c(ent_med, ent_med)
-)
-
-
-#YOU COULD SWAP THE ABOVE AND PLAY WITH SETTINGS 
-ent_lo <- quantile(dat$ent_z, 0.25, na.rm = TRUE)
-ent_hi <- quantile(dat$ent_z, 0.75, na.rm = TRUE)
-LF_med <- median(dat$LF_z, na.rm = TRUE)
-HF_med <- median(dat$HF_z, na.rm = TRUE)
-
-cond_ent <- tibble(
-  level = c("Low entropy (25%)", "High entropy (75%)"),
-  LF_z  = c(LF_med, LF_med),
-  HF_z  = c(HF_med, HF_med),
-  ent_z = c(ent_lo, ent_hi)
-)
-
-tseng_curve_one_condition <- function(Ni_one_species, cond_row) {
-  
-  # Explicit newdata with the exact variable names in the model
-  newdata <- tibble(
-    score = Ni_one_species$bin_mid,
-    LF_z  = cond_row$LF_z,
-    HF_z  = cond_row$HF_z,
-    ent_z = cond_row$ent_z
-  )
-  
-  TPR_i <- as.numeric(predict(m, newdata = newdata, type = "response"))
-  
-  pred <- Ni_one_species %>%
-    mutate(TPR_i = TPR_i)
-  
-  purrr::map_dfr(threshold_grid, function(T) {
-    kept <- pred %>% filter(bin_lower >= T)
-    denom <- sum(kept$N_i)
-    
-    precision <- if (denom == 0) NA_real_ else sum(kept$TPR_i * kept$N_i) / denom
-    prop_retained <- if (sum(pred$N_i) == 0) NA_real_ else sum(kept$N_i) / sum(pred$N_i)
-    
-    tibble(threshold = T, precision = precision, prop_retained = prop_retained)
-  })
-}
-# Curves for each species and each   LF_level
-curves_weighted_lf <- Ni %>%
+# -------------------------
+# 3) Fit species-specific BI models: tp ~ score + BI_z (+ interaction)
+# -------------------------
+fits_bi <- val_bi %>%
   group_by(species) %>%
-  group_modify(~{
-    bind_rows(lapply(1:nrow(cond_lf), function(j) {
-      cdf <- tseng_curve_one_condition(.x %>% select(bin_lower, bin_mid, N_i), cond_lf[j, ])
-      cdf$LF_level <- cond_lf$LF_level[j]
-      cdf
-    }))
-  }) %>%
-  ungroup()
+  mutate(BI_z = z(BI_raw)) %>%
+  nest() %>%
+  mutate(
+    model_bi = map(data, ~ glm(tp ~ score + BI_z + score:BI_z, family = binomial(), data = .x)),
+    n_val_bi = map_int(data, nrow)
+  ) %>%
+  select(species, model_bi, n_val_bi)
 
-# Pick minimum threshold reaching 0.90 precision 
-thresholds_weighted_lf <- curves_weighted_lf %>%
-  group_by(species, LF_level) %>%
+# -------------------------
+# 4) Make BI-conditional threshold table
+#    Rule: pick thresholds at BI_z = median (and optionally q25/q75)
+# -------------------------
+bi_levels <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
   summarise(
-    thr = {tmp <- threshold[!is.na(precision) & precision >= target_precision];
-    if (length(tmp)==0) NA_real_ else min(tmp)},
-    precision_at_thr = ifelse(is.na(thr), NA_real_, precision[match(thr, threshold)]),
-    prop_retained_at_thr = ifelse(is.na(thr), NA_real_, prop_retained[match(thr, threshold)]),
+    BI_z_q25 = quantile(BI_z, 0.25, na.rm = TRUE),
+    BI_z_med = median(BI_z, na.rm = TRUE),
+    BI_z_q75 = quantile(BI_z, 0.75, na.rm = TRUE),
     .groups = "drop"
+  ) %>%
+  tidyr::pivot_longer(cols = c(BI_z_q25, BI_z_med, BI_z_q75),
+                      names_to = "BI_level",
+                      values_to = "BI_z") %>%
+  mutate(BI_level = recode(BI_level,
+                           BI_z_q25 = "Low BI (25%)",
+                           BI_z_med = "Median BI",
+                           BI_z_q75 = "High BI (75%)"))
+
+compute_tseng_threshold_bi <- function(df_bins, model, BI_z_fixed) {
+  # df_bins has: bin_lower, bin_mid, N_i
+  df_bins <- df_bins %>%
+    mutate(
+      TPR_i = predict(model,
+                      newdata = data.frame(score = bin_mid, BI_z = BI_z_fixed),
+                      type = "response"),
+      NTP_i = TPR_i * N_i,
+      NFP_i = (1 - TPR_i) * N_i
+    )
+
+  curve <- purrr::map_dfr(threshold_grid, function(T) {
+    kept <- df_bins %>% dplyr::filter(bin_lower >= T)
+    denom <- sum(kept$NTP_i + kept$NFP_i)
+    prec  <- if (denom == 0) NA_real_ else sum(kept$NTP_i) / denom
+    retained <- if (sum(df_bins$N_i) == 0) NA_real_ else sum(kept$N_i) / sum(df_bins$N_i)
+
+    tibble::tibble(
+      threshold = T,
+      precision = prec,
+      prop_retained = retained,
+      n_retained = sum(kept$N_i)
+    )
+  })
+
+  hit <- curve %>%
+    dplyr::filter(!is.na(precision), precision >= target_precision) %>%
+    dplyr::arrange(threshold) %>%
+    dplyr::slice(1)
+
+  status <- "hit_target"
+  if (nrow(hit) == 0) {
+    hit <- curve %>% dplyr::filter(threshold == fallback_threshold)
+    status <- "fallback"
+  }
+
+  hit <- hit %>% dplyr::mutate(status = status)
+
+  list(summary = hit, curve = curve, bins = df_bins)
+}
+
+threshold_table_bi <- fits_bi %>%
+  left_join(bi_levels, by = "species") %>%
+  left_join(lab_bins %>%
+              group_by(species) %>%
+              summarise(total_detections = sum(N_i), .groups = "drop"),
+            by = "species") %>%
+  left_join(lab_bins, by = "species") %>%
+  group_by(species, BI_level, BI_z, model_bi, n_val_bi, total_detections) %>%
+  summarise(
+    out = list(
+      compute_tseng_threshold_bi(
+        dplyr::cur_data_all() %>% dplyr::select(bin_lower, bin_mid, N_i),
+        model_bi[[1]],
+        BI_z_fixed = BI_z
+      )
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    chosen_threshold = purrr::map_dbl(out, ~ .x$summary$threshold),
+    precision_at_threshold = purrr::map_dbl(out, ~ .x$summary$precision),
+    prop_retained = purrr::map_dbl(out, ~ .x$summary$prop_retained),
+    n_retained = purrr::map_int(out, ~ .x$summary$n_retained),
+    status = purrr::map_chr(out, ~ .x$summary$status),
+    n_dropped = total_detections - n_retained
+  ) %>%
+  select(
+    species,
+    BI_level,
+    n_val_bi,
+    total_detections,
+    chosen_threshold,
+    precision_at_threshold,
+    prop_retained,
+    n_retained,
+    n_dropped,
+    status
+  ) %>%
+  arrange(species, BI_level)
+
+threshold_table_bi
+
+# Save a "pretty" version
+threshold_table_bi_pretty <- threshold_table_bi %>%
+  mutate(
+    chosen_threshold = round(chosen_threshold, 2),
+    precision_at_threshold = round(precision_at_threshold, 3),
+    prop_retained = round(prop_retained, 3)
   )
+threshold_table_bi_pretty
 
-thresholds_weighted_lf
+readr::write_csv(threshold_table_bi_pretty, "HawkEars_thresholds_precision_0.90_BIconditional.csv")
 
-ggplot(curves_weighted_lf, aes(threshold, precision, linetype = LF_level)) +
+# -------------------------
+# 5) Optional quick plot: one species, BI-conditional curves (precision only)
+# -------------------------
+curves_bi <- fits_bi %>%
+  left_join(bi_levels, by = "species") %>%
+  left_join(lab_bins, by = "species") %>%
+  group_by(species, BI_level, BI_z) %>%
+  summarise(
+    model_bi = list(fits_bi$model_bi[match(first(species), fits_bi$species)][[1]]),
+    bins = list(cur_data() %>% select(bin_lower, bin_mid, N_i)),
+    .groups = "drop"
+  ) %>%
+  mutate(curve = pmap(list(bins, model_bi, BI_z),
+                      ~ compute_tseng_threshold_bi(..1, ..2, ..3)$curve)) %>%
+  select(species, BI_level, curve) %>%
+  unnest(curve)
+
+# Example plot for one species (change code)
+one_sp <- "MAWA"
+ggplot(curves_bi %>% filter(species == one_sp),
+       aes(x = threshold, y = precision, linetype = BI_level)) +
   geom_line(linewidth = 1.1) +
   geom_hline(yintercept = target_precision, linetype = "dashed") +
-  facet_wrap(~ species) +
-  coord_cartesian(ylim = c(0.5, 1)) +
+  coord_cartesian(ylim = c(0, 1)) +
   labs(
     x = "Confidence threshold (T)",
     y = "Precision of retained detections",
-    linetype = "Low-frequency noise level",
-    title = "Tseng-weighted precision vs threshold, conditional on LF noise",
-    subtitle = "Weighted by full dataset score distribution"
+    linetype = "BI condition",
+    title = paste0(one_sp, " — Tseng-weighted precision vs threshold (BI-conditional)")
   ) +
-  theme_minimal(base_size = 13)+ scale_y_continuous(breaks = seq(0.5, 1, by = 0.1))
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.minor = element_blank(),
+        legend.position = "top")
 
+
+
+# ============================================================
+# END-OF-SCRIPT: Model diagnostics + BI vs non-BI comparison tables
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(broom)
+
+
+
+# ---- helper: safe z-score (you already have this; keep ONE copy in your script) ----
+z <- function(x) {
+  s <- sd(x, na.rm = TRUE)
+  if (!is.finite(s) || s == 0) return(rep(0, length(x)))
+  (x - mean(x, na.rm = TRUE)) / s
+}
+
+# ---- helper: metrics for binomial GLM ----
+calc_glm_metrics <- function(mod, dat) {
+  dat <- dat %>% dplyr::filter(!is.na(tp))
+  p <- stats::predict(mod, type = "response")
+  y <- dat$tp
+
+  # AIC
+  aic <- stats::AIC(mod)
+
+  # McFadden pseudo-R2
+  null_mod <- stats::glm(tp ~ 1, family = binomial(), data = dat)
+  pseudoR2 <- 1 - as.numeric(stats::logLik(mod) / stats::logLik(null_mod))
+
+  # AUC (rank-based; no extra packages)
+  pos <- p[y == 1]
+  neg <- p[y == 0]
+  if (length(pos) == 0 || length(neg) == 0) {
+    auc <- NA_real_
+  } else {
+    r <- rank(c(pos, neg), ties.method = "average")
+    r_pos_sum <- sum(r[seq_along(pos)])
+    n_pos <- length(pos); n_neg <- length(neg)
+    auc <- (r_pos_sum - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+  }
+
+  # Brier score
+  brier <- mean((p - y)^2, na.rm = TRUE)
+
+  tibble::tibble(AIC = aic, pseudoR2 = pseudoR2, AUC = auc, Brier = brier)
+}
+
+# ------------------------------------------------------------
+# OPTIONAL BUT STRONGLY RECOMMENDED:
+# Compare on the same rows (only rows with BI computed).
+# This avoids "BI model looks better" just because it's evaluated on an easier subset.
+# ------------------------------------------------------------
+val_bi_eval <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
+  ungroup()
+
+# define the matched set of validation rows (same filenames/times as BI-evaluable rows)
+# if you have an ID column, use it; otherwise fall back to these columns:
+join_keys <- intersect(c("filename","start_time","end_time","species","score","tp"), names(val_bi_eval))
+
+val_nonbi_matched <- val %>%
+  # bring in matching keys from the BI-evaluable dataset
+  inner_join(val_bi_eval %>% dplyr::select(all_of(join_keys)) %>% distinct(), by = join_keys)
+
+# If the join keys end up empty (because columns differ), just evaluate non-BI on full val:
+if (length(join_keys) == 0 || nrow(val_nonbi_matched) == 0) {
+  val_nonbi_matched <- val
+}
+
+# -------------------------
+# 1) NON-BI model results: tp ~ score
+# -------------------------
+nonbi_model_results <- val_models %>%         # species, model, n_val
+  mutate(
+    metrics = purrr::map2(model, species, ~ calc_glm_metrics(.x, val_nonbi_matched %>% filter(species == .y)))
+  ) %>%
+  tidyr::unnest(metrics) %>%
+  select(species, n_val, AIC, pseudoR2, AUC, Brier) %>%
+  arrange(species)
+
+# -------------------------
+# 2) BI model results: tp ~ score + BI_z + score:BI_z
+# -------------------------
+bi_model_results <- fits_bi %>%               # species, model_bi, n_val_bi
+  mutate(
+    metrics = purrr::map2(model_bi, species, ~ calc_glm_metrics(.x, val_bi_eval %>% filter(species == .y)))
+  ) %>%
+  tidyr::unnest(metrics) %>%
+  select(species, n_val_bi, AIC, pseudoR2, AUC, Brier) %>%
+  arrange(species)
+
+# -------------------------
+# 3) Comparison table
+# -------------------------
+model_comparison <- nonbi_model_results %>%
+  transmute(
+    species,
+    AIC_nonBI = AIC, pseudoR2_nonBI = pseudoR2, AUC_nonBI = AUC, Brier_nonBI = Brier
+  ) %>%
+  left_join(
+    bi_model_results %>%
+      transmute(
+        species,
+        AIC_BI = AIC, pseudoR2_BI = pseudoR2, AUC_BI = AUC, Brier_BI = Brier
+      ),
+    by = "species"
+  ) %>%
+  mutate(
+    dAIC = AIC_BI - AIC_nonBI,                 # negative = BI better
+    dPseudoR2 = pseudoR2_BI - pseudoR2_nonBI,  # positive = BI better
+    dAUC = AUC_BI - AUC_nonBI,                 # positive = BI better
+    dBrier = Brier_BI - Brier_nonBI            # negative = BI better
+  ) %>%
+  arrange(species)
+
+# -------------------------
+# 4) Print + save
+# -------------------------
+print(nonbi_model_results)
+print(bi_model_results)
+print(model_comparison)
+
+
+readr::write_csv(nonbi_model_results, "HawkEars_model_metrics_nonBI.csv")
+readr::write_csv(bi_model_results,   "HawkEars_model_metrics_BI.csv")
+readr::write_csv(model_comparison,   "HawkEars_model_comparison_BI_vs_nonBI.csv")
+
+
+#
+#dAIC = AIC_BI − AIC_nonBI → negative means BI model is better
+#dAUC = AUC_BI − AUC_nonBI → positive means BI model is better
+#dBrier = Brier_BI − Brier_nonBI → negative means BI model is better
+#dPseudoR2 → positive means BI model is better
+
+final_summary_table <- threshold_table_pretty %>%
+  rename(
+    chosen_threshold_nonBI = chosen_threshold,
+    precision_at_threshold_nonBI = precision_at_threshold,
+    prop_retained_nonBI = prop_retained,
+    n_retained_nonBI = n_retained,
+    n_dropped_nonBI = n_dropped,
+    status_nonBI = status
+  ) %>%
+  left_join(
+    threshold_table_bi_pretty %>%
+      filter(BI_level == "Median BI") %>%   # pick one BI condition for the “headline” table
+      select(species, BI_level,
+             chosen_threshold, precision_at_threshold, prop_retained,
+             n_retained, n_dropped, status) %>%
+      rename(
+        chosen_threshold_BI = chosen_threshold,
+        precision_at_threshold_BI = precision_at_threshold,
+        prop_retained_BI = prop_retained,
+        n_retained_BI = n_retained,
+        n_dropped_BI = n_dropped,
+        status_BI = status
+      ),
+    by = "species"
+  ) %>%
+  left_join(model_comparison, by = "species") %>%
+  arrange(species)
+
+print(final_summary_table)
+readr::write_csv(final_summary_table, "HawkEars_FINAL_thresholds_plus_model_comparison.csv")
