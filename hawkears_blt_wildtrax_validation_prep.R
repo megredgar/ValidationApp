@@ -212,7 +212,7 @@ wt_tags <- validation_joined %>%
     location = site,
     recording_date_time = datetime_utc,
     task_duration = 600,
-    task_method = "None",
+    task_method = "1SPT",
     observer = "Not Assigned",
     species_code = class_code,
     individual_number = individual_number,
@@ -236,8 +236,7 @@ wt_tags <- validation_joined %>%
     )
 
  write.csv(wt_tags, tags_out, row.names = FALSE)
-
-
+ getwd()
 
 message("Done.\nCopied+renamed wavs into: ", dest_dir,
         "\nMap:  ", map_out,
@@ -268,28 +267,36 @@ task_conflicts
 
 
 ##################
+# 
+# dest_dir <- "D:/BARLT Localization Project/Wildtrax_Validation_Upload"
+# 
+# # list copied wavs in destination
+# dest_files <- list.files(dest_dir, pattern = "\\.wav$", full.names = TRUE)
+# dest_fn <- basename(dest_files)
+# 
+# # new names: drop leading "BARLT-" only if present
+# new_dest_fn <- sub("^BARLT-", "", dest_fn)
+# new_dest_paths <- file.path(dest_dir, new_dest_fn)
+# 
+# # safety: stop if any duplicates would be created
+# if (any(duplicated(new_dest_fn))) {
+#   dupes <- new_dest_fn[duplicated(new_dest_fn)]
+#   stop("Dropping BARLT- would create duplicate filenames. Examples:\n",
+#        paste(head(dupes, 20), collapse = "\n"))
+# }
+# 
+# # rename files
+# ok <- file.rename(dest_files, new_dest_paths)
+# if (!all(ok)) {
+#   stop("Some files failed to rename in destination. Examples:\n",
+#        paste(head(dest_files[!ok], 20), collapse = "\n"))
+# }
+# 
 
-dest_dir <- "D:/BARLT Localization Project/Wildtrax_Validation_Upload"
 
-# list copied wavs in destination
-dest_files <- list.files(dest_dir, pattern = "\\.wav$", full.names = TRUE)
-dest_fn <- basename(dest_files)
+wt_tags<-read.csv("D:/BARLT Localization Project/wildtrax_tags_for_validation_all_batches.csv")
+wt_tasks<-read.csv("C:/Users/megre/Downloads/BBMP Localization 2025 - AI Validation Project_Tasks_2026-01-26.csv")
 
-# new names: drop leading "BARLT-" only if present
-new_dest_fn <- sub("^BARLT-", "", dest_fn)
-new_dest_paths <- file.path(dest_dir, new_dest_fn)
 
-# safety: stop if any duplicates would be created
-if (any(duplicated(new_dest_fn))) {
-  dupes <- new_dest_fn[duplicated(new_dest_fn)]
-  stop("Dropping BARLT- would create duplicate filenames. Examples:\n",
-       paste(head(dupes, 20), collapse = "\n"))
-}
 
-# rename files
-ok <- file.rename(dest_files, new_dest_paths)
-if (!all(ok)) {
-  stop("Some files failed to rename in destination. Examples:\n",
-       paste(head(dest_files[!ok], 20), collapse = "\n"))
-}
 
