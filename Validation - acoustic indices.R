@@ -620,6 +620,227 @@ threshold_table_bi_pretty
 
 readr::write_csv(threshold_table_bi_pretty, "HawkEars_thresholds_precision_0.90_BIconditional.csv")
 
+
+cat("\n=== VISUALIZING RAW BI DISTRIBUTIONS ===\n")
+
+# Calculate raw BI distribution statistics per species
+bi_raw_stats <- val_bi %>%
+  group_by(species) %>%
+  summarise(
+    n_obs = n(),
+    BI_raw_mean = mean(BI_raw, na.rm = TRUE),
+    BI_raw_sd = sd(BI_raw, na.rm = TRUE),
+    BI_raw_min = min(BI_raw, na.rm = TRUE),
+    BI_raw_q25 = quantile(BI_raw, 0.25, na.rm = TRUE),
+    BI_raw_median = median(BI_raw, na.rm = TRUE),
+    BI_raw_q75 = quantile(BI_raw, 0.75, na.rm = TRUE),
+    BI_raw_max = max(BI_raw, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print("Raw BI Distribution Statistics:")
+print(bi_raw_stats)
+
+
+# Individual species histograms (raw BI)
+for (sp in unique(val_bi$species)) {
+  sp_data <- val_bi %>% filter(species == sp)
+  sp_stats <- bi_raw_stats %>% filter(species == sp)
+  
+  p <- ggplot(sp_data, aes(x = BI_raw)) +
+    geom_histogram(bins = 30, fill = "#1b9e77", color = "white", alpha = 0.8) +
+    geom_vline(xintercept = sp_stats$BI_raw_q25, linetype = "dashed", 
+               color = "#2166ac", linewidth = 1) +
+    geom_vline(xintercept = sp_stats$BI_raw_median, linetype = "solid", 
+               color = "#762a83", linewidth = 1.2) +
+    geom_vline(xintercept = sp_stats$BI_raw_q75, linetype = "dashed", 
+               color = "#c51b7d", linewidth = 1) +
+    labs(
+      title = paste0(sp, " — Raw Bioacoustic Index Distribution"),
+      subtitle = paste0("n = ", sp_stats$n_obs, 
+                       " | Median = ", round(sp_stats$BI_raw_median, 1),
+                       " | IQR = [", round(sp_stats$BI_raw_q25, 1), ", ", 
+                       round(sp_stats$BI_raw_q75, 1), "]"),
+      x = "Raw Bioacoustic Index",
+      y = "Count"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    ) +
+    annotate("text", x = Inf, y = Inf, 
+             label = paste0("Q25\nMedian\nQ75"),
+             hjust = 1.1, vjust = 1.5, size = 3.5, color = "gray30")
+  
+  print(p)
+  ggsave(paste0("HawkEars_BI_raw_distribution_", sp, ".png"), 
+         plot = p, width = 8, height = 5, dpi = 300)
+}
+
+# Combined multi-panel histogram (all species, raw BI)
+combined_hist_raw <- ggplot(val_bi, aes(x = BI_raw, fill = species)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.8) +
+  geom_vline(data = bi_raw_stats, aes(xintercept = BI_raw_q25), 
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  geom_vline(data = bi_raw_stats, aes(xintercept = BI_raw_median), 
+             linetype = "solid", color = "gray20", linewidth = 0.8) +
+  geom_vline(data = bi_raw_stats, aes(xintercept = BI_raw_q75), 
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  facet_wrap(~ species, ncol = 1, scales = "free") +  # Note: "free" scales for raw values
+  scale_fill_manual(values = c("COYE" = "#1b9e77", 
+                                "MAWA" = "#d95f02", 
+                                "VEER" = "#7570b3")) +
+  labs(
+    title = "Raw Bioacoustic Index Distributions by Species",
+    subtitle = "Solid line = median; Dashed lines = Q25 and Q75",
+    x = "Raw Bioacoustic Index",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+print(combined_hist_raw)
+
+cat("\n=== VISUALIZING BI_z DISTRIBUTIONS ===\n")
+
+# Calculate BI_z distribution statistics per species
+bi_z_stats <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
+  summarise(
+    n_obs = n(),
+    BI_z_mean = mean(BI_z, na.rm = TRUE),
+    BI_z_sd = sd(BI_z, na.rm = TRUE),
+    BI_z_min = min(BI_z, na.rm = TRUE),
+    BI_z_q25 = quantile(BI_z, 0.25, na.rm = TRUE),
+    BI_z_median = median(BI_z, na.rm = TRUE),
+    BI_z_q75 = quantile(BI_z, 0.75, na.rm = TRUE),
+    BI_z_max = max(BI_z, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print("BI_z Distribution Statistics:")
+print(bi_z_stats)
+
+# Create histogram data
+bi_z_for_hist <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
+  ungroup()
+
+# Individual species histograms
+for (sp in unique(bi_z_for_hist$species)) {
+  sp_data <- bi_z_for_hist %>% filter(species == sp)
+  sp_stats <- bi_z_stats %>% filter(species == sp)
+  
+  p <- ggplot(sp_data, aes(x = BI_z)) +
+    geom_histogram(bins = 30, fill = "#1b9e77", color = "white", alpha = 0.8) +
+    geom_vline(xintercept = sp_stats$BI_z_q25, linetype = "dashed", 
+               color = "#2166ac", linewidth = 1) +
+    geom_vline(xintercept = sp_stats$BI_z_median, linetype = "solid", 
+               color = "#762a83", linewidth = 1.2) +
+    geom_vline(xintercept = sp_stats$BI_z_q75, linetype = "dashed", 
+               color = "#c51b7d", linewidth = 1) +
+    labs(
+      title = paste0(sp, " — Standardized Bioacoustic Index (BI_z) Distribution"),
+      subtitle = paste0("n = ", sp_stats$n_obs, 
+                       " | Median = ", round(sp_stats$BI_z_median, 2),
+                       " | IQR = [", round(sp_stats$BI_z_q25, 2), ", ", 
+                       round(sp_stats$BI_z_q75, 2), "]"),
+      x = "Standardized Bioacoustic Index (BI_z)",
+      y = "Count"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    ) +
+    annotate("text", x = Inf, y = Inf, 
+             label = paste0("Q25 (Low BI)\nMedian\nQ75 (High BI)"),
+             hjust = 1.1, vjust = 1.5, size = 3.5, color = "gray30")
+  
+  print(p)
+  ggsave(paste0("HawkEars_BI_z_distribution_", sp, ".png"), 
+         plot = p, width = 8, height = 5, dpi = 300)
+}
+
+# Combined multi-panel histogram (all species)
+combined_hist <- ggplot(bi_z_for_hist, aes(x = BI_z, fill = species)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.8) +
+  geom_vline(data = bi_z_stats, aes(xintercept = BI_z_q25), 
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  geom_vline(data = bi_z_stats, aes(xintercept = BI_z_median), 
+             linetype = "solid", color = "gray20", linewidth = 0.8) +
+  geom_vline(data = bi_z_stats, aes(xintercept = BI_z_q75), 
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  facet_wrap(~ species, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c("COYE" = "#1b9e77", 
+                                "MAWA" = "#d95f02", 
+                                "VEER" = "#7570b3")) +
+  labs(
+    title = "Bioacoustic Index (BI_z) Distributions by Species",
+    subtitle = "Solid line = median; Dashed lines = Q25 and Q75 (BI thresholding levels)",
+    x = "Standardized Bioacoustic Index (BI_z)",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+print(combined_hist)
+
+
+
+
+bi_comparison_data <- val_bi %>%
+  group_by(species) %>%
+  mutate(BI_z = z(BI_raw)) %>%
+  ungroup() %>%
+  select(species, BI_raw, BI_z) %>%
+  pivot_longer(cols = c(BI_raw, BI_z), 
+               names_to = "BI_type", 
+               values_to = "BI_value") %>%
+  mutate(BI_type = recode(BI_type,
+                          BI_raw = "Raw BI",
+                          BI_z = "Standardized BI (BI_z)"))
+
+comparison_plot <- ggplot(bi_comparison_data, 
+                          aes(x = BI_value, fill = BI_type)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.7, position = "identity") +
+  facet_grid(species ~ BI_type, scales = "free") +
+  scale_fill_manual(values = c("Raw BI" = "#1b9e77", 
+                                "Standardized BI (BI_z)" = "#d95f02")) +
+  labs(
+    title = "Comparison: Raw vs. Standardized Bioacoustic Index",
+    x = "Bioacoustic Index Value",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    strip.text = element_text(face = "bold", size = 10),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+print(comparison_plot)
+ggsave("HawkEars_BI_raw_vs_standardized_comparison.png", 
+       plot = comparison_plot, width = 10, height = 8, dpi = 300)
+
+
+
+
+
 # -------------------------
 # 5) Optional quick plot: one species, BI-conditional curves (precision only)
 # -------------------------
@@ -657,7 +878,7 @@ ggplot(curves_bi %>% filter(species == one_sp),
 
 
 # ============================================================
-# END-OF-SCRIPT: Model diagnostics + BI vs non-BI comparison tables
+#Model diagnostics + BI vs non-BI comparison tables
 # ============================================================
 
 library(dplyr)
@@ -667,7 +888,7 @@ library(broom)
 
 
 
-# ---- helper: safe z-score (you already have this; keep ONE copy in your script) ----
+# ---- helper z-score  ----
 z <- function(x) {
   s <- sd(x, na.rm = TRUE)
   if (!is.finite(s) || s == 0) return(rep(0, length(x)))
@@ -706,7 +927,7 @@ calc_glm_metrics <- function(mod, dat) {
 }
 
 # ------------------------------------------------------------
-# OPTIONAL BUT STRONGLY RECOMMENDED:
+
 # Compare on the same rows (only rows with BI computed).
 # This avoids "BI model looks better" just because it's evaluated on an easier subset.
 # ------------------------------------------------------------
@@ -843,7 +1064,7 @@ save.image(file = "workspace.RData")
 
 # ============================================================
 # HawkEars Threshold Calibration - Enhancement Tasks
-# Tasks 2, 3, 7, 11, 13 from to-do list
+
 # ============================================================
 
 library(dplyr)
@@ -852,11 +1073,6 @@ library(tidyr)
 library(ggplot2)
 library(broom)
 
-# Assumes you've already run your main script and have:
-# - fits_bi (BI models)
-# - val_bi_eval (validation data with BI)
-# - threshold_table_bi (thresholds across BI levels)
-# - final_summary_table (combined results)
 
 # ============================================================
 # TASK 3: INTERACTION TERM VALIDATION
