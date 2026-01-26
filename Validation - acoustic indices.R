@@ -2134,3 +2134,217 @@ for (i in 1:nrow(decision_summary)) {
               decision_summary$recommended_model[i],
               decision_summary$deployment_threshold[i]))
 }
+
+
+## N per combo of score and BI_z 
+
+r# ============================================================
+# SAMPLE SIZE DISTRIBUTION: Score × BI_z Combinations
+# ============================================================
+
+cat("\n=== ANALYZING SAMPLE SIZE ACROSS SCORE × BI_z SPACE ===\n")
+
+# Create bins for score and BI_z
+sample_coverage <- val_bi_eval %>%
+  mutate(
+    # Bin score into 0.1 intervals for visualization
+    score_bin = cut(score, 
+                    breaks = seq(0, 1, by = 0.1),
+                    include.lowest = TRUE,
+                    labels = paste0(seq(0, 0.9, by = 0.1), "-", seq(0.1, 1.0, by = 0.1))),
+    
+    # Bin BI_z into quartile-based categories
+    BI_z_category = cut(BI_z,
+                        breaks = c(-Inf, -0.674, 0, 0.674, Inf),  # approximate quartiles for std normal
+                        labels = c("Very Low BI", "Low BI", "High BI", "Very High BI"))
+  ) %>%
+  count(species, score_bin, BI_z_category, name = "n_obs") %>%
+  filter(!is.na(score_bin), !is.na(BI_z_category))
+
+print("Sample Size Summary:")
+print(sample_coverage %>% 
+        group_by(species) %>% 
+        summarise(
+          total_obs = sum(n_obs),
+          mean_per_combo = mean(n_obs),
+          min_per_combo = min(n_obs),
+          max_per_combo = max(n_obs),
+          n_combos = n(),
+          .groups = "drop"
+        ))
+
+# PLOT 1: Heatmap of sample sizes (score × BI_z)
+heatmap_plot <- ggplot(sample_coverage, 
+                       aes(x = score_bin, y = BI_z_category, fill = n_obs)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = n_obs), color = "white", size = 3, fontface = "bold") +
+  facet_wrap(~ species, ncol = 1) +
+  scale_fill_viridis_c(option = "plasma", name = "Sample\nSize (n)") +
+  labs(
+    title = "Sample Size Distribution: Confidence Score × BI Condition",
+    subtitle = "Each cell shows number of validation observations",
+    x = "Confidence Score Bin",
+    y = "Bioacoustic Index Category"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    strip.text = element_text(face = "bold", size = 11),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  )
+
+print(heatmap_plot)
+ggsave("HawkEars_sample_coverage_heatmap.png", 
+       plot = heatmap_plot, width = 10, height = 8, dpi = 300)
+
+# PLOT 2: Stacked bar chart by species
+stacked_bar <- ggplot(sample_coverage, 
+                      aes(x = score_bin, y = n_obs, fill = BI_z_category)) +
+  geom_col(position = "stack", width = 0.8) +
+  facet_wrap(~ species, ncol = 1, scales = "free_y") +
+  scale_fill_manual(
+    values = c("Very Low BI" = "#2166ac", 
+               "Low BI" = "#92c5de", 
+               "High BI" = "#f4a582", 
+               "Very High BI" = "#b2182b"),
+    name = "BI Condition"
+  ) +
+  labs(
+    title = "Sample Size Distribution Across Confidence Score Bins",
+    subtitle = "Stacked by BI condition",
+    x = "Confidence Score Bin",
+    y = "Number of Observations"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    strip.text = element_text(face = "bold", size = 11),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+
+print(stacked_bar)
+ggsave("HawkEars_sample_coverage_stacked_bar.png", 
+       plot = stacked_bar, width = 10, height = 8, dpi = 300)
+
+# PLOT 3: Fine-grained scatter plot (actual continuous values)
+scatter_coverage <- val_bi_eval %>%
+  mutate(score_round = round(score, 2)) %>%
+  count(species, score_round, BI_z, name = "n_combo") %>%
+  mutate(n_category = cut(n_combo, 
+                          breaks = c(0, 1, 3, 5, 10, Inf),
+                          labels = c("1", "2-3", "4-5", "6-10", ">10")))
+
+scatter_plot <- ggplot(scatter_coverage, 
+                       aes(x = score_round, y = BI_z, size = n_combo, color = n_category)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ species, ncol = 1) +
+  scale_size_continuous(range = c(1, 8), name = "Sample Size") +
+  scale_color_viridis_d(option = "rocket", name = "Sample\nSize\nCategory") +
+  labs(
+    title = "Validation Data Coverage: Score × BI_z Space",
+    subtitle = "Point size and color indicate number of observations per combination",
+    x = "Confidence Score",
+    y = "Standardized BI (BI_z)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    strip.text = element_text(face = "bold", size = 11),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+print(scatter_plot)
+ggsave("HawkEars_sample_coverage_scatter.png", 
+       plot = scatter_plot, width = 10, height = 8, dpi = 300)
+
+# PLOT 4: Marginal distributions to show where data is concentrated
+marginal_score <- val_bi_eval %>%
+  ggplot(aes(x = score, fill = species)) +
+  geom_histogram(bins = 20, color = "white", alpha = 0.7) +
+  facet_wrap(~ species, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c("COYE" = "#1b9e77", 
+                                "MAWA" = "#d95f02", 
+                                "VEER" = "#7570b3")) +
+  labs(
+    title = "Marginal Distribution: Confidence Scores",
+    x = "Confidence Score",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+print(marginal_score)
+ggsave("HawkEars_marginal_score.png", 
+       plot = marginal_score, width = 8, height = 6, dpi = 300)
+
+# Check for sparse regions (combinations with <5 observations)
+sparse_regions <- sample_coverage %>%
+  filter(n_obs < 5) %>%
+  arrange(species, n_obs)
+
+cat("\n=== SPARSE REGIONS (n < 5) ===\n")
+print(sparse_regions)
+
+if (nrow(sparse_regions) > 0) {
+  cat("\nWARNING: Found", nrow(sparse_regions), "score×BI combinations with <5 observations.\n")
+  cat("These regions may have unstable model predictions.\n")
+}
+
+# Summary statistics per species
+coverage_summary <- val_bi_eval %>%
+  group_by(species) %>%
+  summarise(
+    n_total = n(),
+    score_min = min(score),
+    score_max = max(score),
+    score_median = median(score),
+    BI_z_min = min(BI_z),
+    BI_z_max = max(BI_z),
+    BI_z_median = median(BI_z),
+    # Count unique score bins (0.05 resolution)
+    n_unique_score_bins = n_distinct(round(score / 0.05) * 0.05),
+    # Correlation between score and BI_z (to check if they're confounded)
+    score_BI_cor = cor(score, BI_z, use = "complete.obs"),
+    .groups = "drop"
+  )
+
+cat("\n=== COVERAGE SUMMARY ===\n")
+print(coverage_summary)
+
+write.csv(coverage_summary, 
+          "HawkEars_sample_coverage_summary.csv", 
+          row.names = FALSE)
+
+write.csv(sample_coverage, 
+          "HawkEars_sample_coverage_by_bin.csv", 
+          row.names = FALSE)
+
+# Check for correlation between score and BI_z (important diagnostic!)
+cor_plot <- ggplot(val_bi_eval, aes(x = score, y = BI_z)) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+  facet_wrap(~ species) +
+  labs(
+    title = "Correlation Between Confidence Score and BI_z",
+    subtitle = "Red line = linear fit; Check for confounding",
+    x = "Confidence Score",
+    y = "Standardized BI (BI_z)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+
+print(cor_plot)
+ggsave("HawkEars_score_BI_correlation.png", 
+       plot = cor_plot, width = 10, height = 4, dpi = 300)
+

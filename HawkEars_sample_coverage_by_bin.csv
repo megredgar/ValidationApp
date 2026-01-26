@@ -1,0 +1,109 @@
+"species","score_bin","BI_z_category","n_obs"
+"COYE","0.1-0.2","Very Low BI",7
+"COYE","0.1-0.2","Low BI",1
+"COYE","0.1-0.2","High BI",7
+"COYE","0.1-0.2","Very High BI",5
+"COYE","0.2-0.3","Very Low BI",4
+"COYE","0.2-0.3","Low BI",8
+"COYE","0.2-0.3","Very High BI",8
+"COYE","0.3-0.4","Very Low BI",8
+"COYE","0.3-0.4","Low BI",5
+"COYE","0.3-0.4","High BI",5
+"COYE","0.3-0.4","Very High BI",2
+"COYE","0.4-0.5","Very Low BI",9
+"COYE","0.4-0.5","Low BI",3
+"COYE","0.4-0.5","High BI",4
+"COYE","0.4-0.5","Very High BI",5
+"COYE","0.5-0.6","Very Low BI",4
+"COYE","0.5-0.6","Low BI",2
+"COYE","0.5-0.6","High BI",3
+"COYE","0.5-0.6","Very High BI",6
+"COYE","0.6-0.7","Very Low BI",6
+"COYE","0.6-0.7","Low BI",5
+"COYE","0.6-0.7","High BI",6
+"COYE","0.6-0.7","Very High BI",2
+"COYE","0.7-0.8","Very Low BI",2
+"COYE","0.7-0.8","Low BI",4
+"COYE","0.7-0.8","High BI",4
+"COYE","0.7-0.8","Very High BI",6
+"COYE","0.8-0.9","Very Low BI",2
+"COYE","0.8-0.9","Low BI",4
+"COYE","0.8-0.9","High BI",1
+"COYE","0.8-0.9","Very High BI",7
+"COYE","0.9-1","Very Low BI",4
+"COYE","0.9-1","Low BI",5
+"COYE","0.9-1","High BI",6
+"COYE","0.9-1","Very High BI",6
+"MAWA","0-0.1","Low BI",1
+"MAWA","0.1-0.2","Very Low BI",9
+"MAWA","0.1-0.2","Low BI",4
+"MAWA","0.1-0.2","High BI",2
+"MAWA","0.1-0.2","Very High BI",5
+"MAWA","0.2-0.3","Very Low BI",7
+"MAWA","0.2-0.3","Low BI",5
+"MAWA","0.2-0.3","High BI",1
+"MAWA","0.2-0.3","Very High BI",6
+"MAWA","0.3-0.4","Very Low BI",4
+"MAWA","0.3-0.4","Low BI",8
+"MAWA","0.3-0.4","High BI",3
+"MAWA","0.3-0.4","Very High BI",6
+"MAWA","0.4-0.5","Very Low BI",6
+"MAWA","0.4-0.5","Low BI",5
+"MAWA","0.4-0.5","High BI",5
+"MAWA","0.4-0.5","Very High BI",4
+"MAWA","0.5-0.6","Very Low BI",5
+"MAWA","0.5-0.6","Low BI",4
+"MAWA","0.5-0.6","High BI",5
+"MAWA","0.5-0.6","Very High BI",6
+"MAWA","0.6-0.7","Very Low BI",4
+"MAWA","0.6-0.7","Low BI",4
+"MAWA","0.6-0.7","High BI",6
+"MAWA","0.6-0.7","Very High BI",6
+"MAWA","0.7-0.8","Very Low BI",3
+"MAWA","0.7-0.8","Low BI",4
+"MAWA","0.7-0.8","High BI",6
+"MAWA","0.7-0.8","Very High BI",7
+"MAWA","0.8-0.9","Very Low BI",6
+"MAWA","0.8-0.9","Low BI",5
+"MAWA","0.8-0.9","High BI",5
+"MAWA","0.8-0.9","Very High BI",4
+"MAWA","0.9-1","Very Low BI",3
+"MAWA","0.9-1","Low BI",4
+"MAWA","0.9-1","High BI",7
+"MAWA","0.9-1","Very High BI",6
+"VEER","0.1-0.2","Very Low BI",5
+"VEER","0.1-0.2","Low BI",4
+"VEER","0.1-0.2","High BI",5
+"VEER","0.1-0.2","Very High BI",6
+"VEER","0.2-0.3","Very Low BI",7
+"VEER","0.2-0.3","Low BI",4
+"VEER","0.2-0.3","High BI",3
+"VEER","0.2-0.3","Very High BI",6
+"VEER","0.3-0.4","Very Low BI",6
+"VEER","0.3-0.4","Low BI",3
+"VEER","0.3-0.4","High BI",5
+"VEER","0.3-0.4","Very High BI",6
+"VEER","0.4-0.5","Very Low BI",7
+"VEER","0.4-0.5","Low BI",6
+"VEER","0.4-0.5","High BI",5
+"VEER","0.4-0.5","Very High BI",2
+"VEER","0.5-0.6","Very Low BI",7
+"VEER","0.5-0.6","Low BI",5
+"VEER","0.5-0.6","High BI",4
+"VEER","0.5-0.6","Very High BI",4
+"VEER","0.6-0.7","Very Low BI",5
+"VEER","0.6-0.7","Low BI",6
+"VEER","0.6-0.7","High BI",6
+"VEER","0.6-0.7","Very High BI",4
+"VEER","0.7-0.8","Very Low BI",4
+"VEER","0.7-0.8","Low BI",5
+"VEER","0.7-0.8","High BI",4
+"VEER","0.7-0.8","Very High BI",7
+"VEER","0.8-0.9","Very Low BI",8
+"VEER","0.8-0.9","Low BI",3
+"VEER","0.8-0.9","High BI",1
+"VEER","0.8-0.9","Very High BI",8
+"VEER","0.9-1","Very Low BI",2
+"VEER","0.9-1","Low BI",8
+"VEER","0.9-1","High BI",4
+"VEER","0.9-1","Very High BI",6
