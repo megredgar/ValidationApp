@@ -706,6 +706,8 @@ combined_hist_raw <- ggplot(val_bi, aes(x = BI_raw, fill = species)) +
   )
 
 print(combined_hist_raw)
+ggsave("HawkEars_combined_RAW_comparison.png",
+       plot = combined_hist_raw, width = 10, height = 8, dpi = 300)
 
 cat("\n=== VISUALIZING BI_z DISTRIBUTIONS ===\n")
 
@@ -2125,42 +2127,10 @@ cat("\n")
 cat("============================================================\n")
 cat("  ADDITIVE BI MODEL ANALYSIS COMPLETE\n")
 cat("============================================================\n")
-cat("\n")
-cat("KEY OUTPUTS:\n")
-cat("  ✓ HawkEars_model_comparison_FULL_threeway.csv\n")
-cat("  ✓ HawkEars_thresholds_BI_ADDITIVE.csv\n")
-cat("  ✓ HawkEars_threshold_comparison_threeway.csv\n")
-cat("  ✓ HawkEars_FINAL_summary_all_models.csv\n")
-cat("  ✓ HawkEars_DEPLOYMENT_decisions.csv\n")
-cat("\n")
-cat("FIGURES GENERATED:\n")
-cat("  ✓ HawkEars_AIC_comparison_threeway.png\n")
-cat("  ✓ HawkEars_AUC_comparison_threeway.png\n")
-cat("  ✓ HawkEars_BI_curves_ADDITIVE_[species].png\n")
-cat("  ✓ HawkEars_additive_vs_interaction_[species].png\n")
-cat("\n")
-cat("RECOMMENDED MODELS BY SPECIES:\n")
+
 for (i in 1:nrow(decision_summary)) {
   cat(sprintf("  %s: %s (threshold = %.2f)\n", 
               decision_summary$species[i], 
               decision_summary$recommended_model[i],
               decision_summary$deployment_threshold[i]))
 }
-cat("\n")
-cat("NEXT STEP: Review 'HawkEars_DEPLOYMENT_decisions.csv' for deployment strategy\n")
-cat("============================================================\n")
-
-species_interpretations_FINAL <- tibble(
-  species = c("COYE", "MAWA", "VEER"),
-  interpretation = c(
-    "**COYE**: BI does not improve discrimination (ΔAUC = -0.002, dAIC = +1.0). Threshold = 0.40 retains 12.9% of detections at 90% precision. Common Yellowthroat produces loud, distinctive 'witchity-witchity-witchity' song (3-7 kHz) with clear temporal structure, likely robust to acoustic clutter in wetland habitats. Bootstrap CI [0.30, 0.55] suggests moderate uncertainty; recommend conservative threshold of 0.50 for deployment.",
-    
-    "**MAWA**: BI does not improve discrimination (ΔAUC = +0.002, dAIC = +2.0). Threshold = 0.75 retains 5.3% of detections at 90% precision. Magnolia Warbler has high-frequency (5-8 kHz), buzzy song that is relatively distinct in boreal soundscapes. High threshold reflects need to avoid confusion with similar high-frequency species. Bootstrap CI [0.55, 0.95] indicates high uncertainty; collect additional validation data or use conservative threshold of 0.90 for deployment.",
-    
-    "**VEER**: BI provides marginal improvement (ΔAUC = +0.007) but does not meet practical significance threshold (>0.01) or model parsimony criteria (dAIC = +1.0). Threshold = 0.20 retains 25.8% of detections at 90% precision. Veery produces downward-spiraling, flute-like song (2-4 kHz) that is highly distinctive. Low threshold maximizes detection while maintaining precision. Bootstrap CI [0.20, 0.25] indicates threshold is well-estimated."
-  )
-)
-
-write.csv(species_interpretations_FINAL, 
-          "HawkEars_species_interpretations_FINAL.csv", 
-          row.names = FALSE)
